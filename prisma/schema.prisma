@@ -1,0 +1,438 @@
+// prisma/schema.prisma
+// Full Eversystems Management schema (Part 1 of the spec).
+// The ENTIRE schema is migrated in Phase 1 so it never changes again, even though
+// report tables are not used until Phase 2 and financial tables not until Phase 6.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ──────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  SUPERVISOR
+  VIEWER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+}
+
+enum ReportStatus {
+  DRAFT // Saved but not submitted — editable by author
+  SUBMITTED // Locked for author edits pending review (author may recall to DRAFT)
+  APPROVED // Final — immutable
+  REJECTED // Returned to author with a note — author edits and resubmits
+}
+
+enum AuditAction {
+  USER_LOGIN
+  USER_LOGIN_FAILED
+  USER_CREATED
+  USER_UPDATED
+  USER_STATUS_CHANGED
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_RESET_COMPLETED
+  PROJECT_CREATED
+  PROJECT_UPDATED
+  PROJECT_MEMBER_ADDED
+  PROJECT_MEMBER_REMOVED
+  REPORT_CREATED
+  REPORT_SUBMITTED
+  REPORT_RECALLED
+  REPORT_APPROVED
+  REPORT_REJECTED
+  REPORT_UPDATED
+  CATALOG_UPDATED
+  ASSET_CREATED
+  ASSET_UPDATED
+  ACTIVITY_CREATED
+  ACTIVITY_UPDATED
+}
+
+// ─── USERS ────────────────────────────────────────────────────────────────────
+
+model User {
+  id                 String     @id @default(cuid())
+  userCode           String     @unique // USR-00001 — immutable
+  email              String     @unique
+  passwordHash       String
+  firstName          String
+  lastName           String
+  phone              String?
+  role               Role       @default(SUPERVISOR)
+  status             UserStatus @default(ACTIVE)
+  // Set when an admin creates the user with a temporary password; cleared once the
+  // user chooses their own password on first login. (Agreed Phase 0 addition.)
+  mustChangePassword Boolean    @default(false)
+  lastLoginAt        DateTime?
+  resetToken         String?    @unique
+  resetTokenExpiry   DateTime?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  projects  ProjectMember[]
+  reports   DailyReport[]   @relation("ReportAuthor")
+  reviews   DailyReport[]   @relation("ReportReviewer")
+  auditLogs AuditLog[]
+}
+
+// ─── PROJECTS (SITES) ──────────────────────────────────────────────────────────
+
+model Project {
+  id          String        @id @default(cuid())
+  projectCode String        @unique // PRJ-2026-001 — immutable
+  name        String
+  location    String?
+  status      ProjectStatus @default(ACTIVE)
+  startDate   DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  createdBy   String
+
+  // ─── Financials (Phase 6). Nullable; unused until then. ───
+  contractValue    Decimal?  @db.Decimal(18, 2)
+  currency         String    @default("BHD")
+  budgetCost       Decimal?  @db.Decimal(18, 2)
+  retentionPct     Decimal?  @db.Decimal(5, 2)
+  advancePct       Decimal?  @db.Decimal(5, 2)
+  paymentTermsDays Int?      @default(45)
+  plannedStart     DateTime? @db.Date
+  plannedEnd       DateTime? @db.Date
+
+  members    ProjectMember[]
+  reports    DailyReport[]
+  counters   ReportCounter[]
+  assets     Asset[]
+  baseline   BaselinePeriod[]
+  valuations Valuation[]
+  expenses   Expense[]
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  addedAt   DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+}
+
+// ─── CATALOGS ───────────────────────────────────────────────────────────────
+// Global reference lists managed by ADMIN. Soft-deactivated, never deleted.
+
+model LaborCategory {
+  id         String   @id @default(cuid())
+  name       String   @unique
+  isActive   Boolean  @default(true)
+  sortOrder  Int      @default(0)
+  hourlyRate Decimal? @db.Decimal(10, 3) // Phase 6: cost per man-hour
+
+  entries ManpowerEntry[]
+}
+
+model Material {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  unit      String
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  unitRate  Decimal? @db.Decimal(12, 3) // Phase 6: cost per unit
+
+  entries MaterialEntry[]
+}
+
+// ─── DAILY REPORTS ──────────────────────────────────────────────────────────
+
+model DailyReport {
+  id           String       @id @default(cuid())
+  reportCode   String       @unique // DR-2026-0001 — global, immutable
+  projectId    String
+  authorId     String
+  reportDate   DateTime     @db.Date
+  status       ReportStatus @default(DRAFT)
+  weather      String?
+  generalNotes String?
+  submittedAt  DateTime?
+  reviewedById String?
+  reviewedAt   DateTime?
+  reviewNote   String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  project    Project @relation(fields: [projectId], references: [id])
+  author     User    @relation("ReportAuthor", fields: [authorId], references: [id])
+  reviewedBy User?   @relation("ReportReviewer", fields: [reviewedById], references: [id])
+
+  activities ReportActivity[]
+
+  @@unique([projectId, reportDate, authorId])
+  @@index([projectId, reportDate])
+  @@index([status])
+  @@index([authorId])
+}
+
+// ─── STRUCTURED SCOPE (Phase R) ───────────────────────────────────────────────
+// A project is broken into Assets; each Asset has Activities (BOQ lines with a unit
+// and a contracted quantity = the cap). Supervisors report quantityDone per activity.
+
+model Asset {
+  id          String   @id @default(cuid())
+  projectId   String
+  ref         String? // optional admin reference, e.g. "Block A"
+  name        String
+  description String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true) // soft-deactivate; history preserved
+  createdAt   DateTime @default(now())
+
+  project    Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  activities Activity[]
+
+  @@index([projectId])
+}
+
+model Activity {
+  id          String   @id @default(cuid())
+  assetId     String
+  ref         String? // optional BOQ item no., e.g. "3.2.1"
+  name        String
+  unit        String
+  boqQuantity Decimal  @db.Decimal(14, 3) // contracted/planned quantity — the CAP
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  // ─── Phase 6 (nullable, unused until then): unit rates for bottom-up EVM. ───
+  costRate Decimal? @db.Decimal(14, 3) // planned cost per unit — budget / AC basis
+  billRate Decimal? @db.Decimal(14, 3) // contract value per unit — PV / earned revenue
+
+  asset    Asset            @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  progress ReportActivity[]
+
+  @@index([assetId])
+}
+
+model ReportActivity {
+  id           String  @id @default(cuid())
+  reportId     String
+  activityId   String
+  quantityDone Decimal @db.Decimal(14, 3) // INCREMENT reported on this report's date
+  note         String? // optional; replaces the free-text WorkItem
+  sortOrder    Int     @default(0)
+
+  report    DailyReport     @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  activity  Activity        @relation(fields: [activityId], references: [id])
+  manpower  ManpowerEntry[]
+  materials MaterialEntry[]
+
+  @@unique([reportId, activityId]) // an activity appears at most once per report
+  @@index([activityId])
+}
+
+model ManpowerEntry {
+  id               String  @id @default(cuid())
+  reportActivityId String
+  categoryId       String
+  headcount        Int
+  hours            Decimal @db.Decimal(5, 2)
+  notes            String?
+
+  // Phase 6: cost snapshot, populated once on report approval.
+  rateAtApproval Decimal? @db.Decimal(12, 3)
+  costAtApproval Decimal? @db.Decimal(14, 3)
+
+  reportActivity ReportActivity @relation(fields: [reportActivityId], references: [id], onDelete: Cascade)
+  category       LaborCategory  @relation(fields: [categoryId], references: [id])
+
+  @@unique([reportActivityId, categoryId])
+}
+
+model MaterialEntry {
+  id               String  @id @default(cuid())
+  reportActivityId String
+  materialId       String
+  quantity         Decimal @db.Decimal(12, 3)
+  notes            String?
+
+  // Phase 6: cost snapshot, populated once on report approval.
+  rateAtApproval Decimal? @db.Decimal(12, 3)
+  costAtApproval Decimal? @db.Decimal(14, 3)
+
+  reportActivity ReportActivity @relation(fields: [reportActivityId], references: [id], onDelete: Cascade)
+  material       Material       @relation(fields: [materialId], references: [id])
+
+  @@unique([reportActivityId, materialId])
+}
+
+// ─── REPORT NUMBERING (no Redis) ─────────────────────────────────────────────
+
+model ReportCounter {
+  id        String  @id @default(cuid())
+  scope     String  @unique // "report:2026", "user", "project:2026"
+  value     Int     @default(0)
+  projectId String?
+
+  project Project? @relation(fields: [projectId], references: [id])
+}
+
+// ─── AUDIT LOG (light) ────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  action     AuditAction
+  userId     String?
+  projectId  String?
+  entity     String?
+  entityId   String?
+  entityCode String?
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime    @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([action])
+  @@index([projectId])
+  @@index([createdAt])
+}
+
+// ─── FINANCIAL LAYER (Phases 6–9). Migrated now; unused until then. ───────────
+
+enum ValuationStatus {
+  DRAFT
+  SUBMITTED
+  CERTIFIED
+  INVOICED
+  PAID
+}
+
+enum ExpenseCategory {
+  SUBCONTRACTOR
+  EQUIPMENT_RENTAL
+  SALARIES_INDIRECT
+  SITE_OVERHEAD
+  HEAD_OFFICE_OVERHEAD
+  MATERIALS_DIRECT
+  OTHER
+}
+
+enum CashDirection {
+  IN
+  OUT
+}
+
+enum CashCategory {
+  VALUATION_RECEIPT
+  ADVANCE_PAYMENT
+  RETENTION_RELEASE
+  SUPPLIER_PAYMENT
+  SUBCONTRACTOR_PAYMENT
+  PAYROLL
+  EQUIPMENT
+  OVERHEAD
+  VAT_TAX
+  LOAN_FINANCE
+  OTHER_IN
+  OTHER_OUT
+}
+
+model BaselinePeriod {
+  id          String   @id @default(cuid())
+  projectId   String
+  periodMonth DateTime @db.Date
+  plannedPct  Decimal  @db.Decimal(6, 3)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, periodMonth])
+}
+
+model Valuation {
+  id              String          @id @default(cuid())
+  valuationCode   String          @unique
+  projectId       String
+  periodMonth     DateTime        @db.Date
+  progressPct     Decimal         @db.Decimal(6, 3)
+  grossAmount     Decimal         @db.Decimal(18, 2)
+  previousGross   Decimal         @db.Decimal(18, 2)
+  retentionHeld   Decimal         @db.Decimal(18, 2)
+  advanceRecovery Decimal         @db.Decimal(18, 2)
+  netPayable      Decimal         @db.Decimal(18, 2)
+  status          ValuationStatus @default(DRAFT)
+  certifiedAt     DateTime?
+  expectedReceipt DateTime?       @db.Date
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  createdBy       String
+
+  project  Project           @relation(fields: [projectId], references: [id])
+  receipts CashTransaction[]
+
+  @@unique([projectId, periodMonth])
+}
+
+model Expense {
+  id          String          @id @default(cuid())
+  projectId   String?
+  category    ExpenseCategory
+  description String
+  vendor      String?
+  expenseDate DateTime        @db.Date
+  amount      Decimal         @db.Decimal(18, 2)
+  createdAt   DateTime        @default(now())
+  createdBy   String
+
+  project Project? @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, expenseDate])
+}
+
+model BankAccount {
+  id             String   @id @default(cuid())
+  name           String
+  currency       String   @default("BHD")
+  openingBalance Decimal  @db.Decimal(18, 2)
+  openingDate    DateTime @db.Date
+  isActive       Boolean  @default(true)
+
+  transactions CashTransaction[]
+}
+
+model CashTransaction {
+  id          String        @id @default(cuid())
+  accountId   String
+  txnDate     DateTime      @db.Date
+  direction   CashDirection
+  category    CashCategory
+  amount      Decimal       @db.Decimal(18, 2)
+  description String
+  projectId   String?
+  valuationId String?
+  expenseId   String?
+  createdAt   DateTime      @default(now())
+  createdBy   String
+
+  account   BankAccount @relation(fields: [accountId], references: [id])
+  valuation Valuation?  @relation(fields: [valuationId], references: [id])
+
+  @@index([accountId, txnDate])
+  @@index([projectId])
+}
