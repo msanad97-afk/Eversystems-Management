@@ -1,0 +1,34 @@
+# Eversystems Management — project working rules
+
+## Version control: commit & push automatically (do this WITHOUT being asked)
+
+Commit and push to GitHub routinely so work is never lost. The following are
+**automatic triggers** — act on them without waiting for the user to ask:
+
+- **End of every build phase** (Phase 1–9, Phase R, etc.).
+- **After any significant working change** — a feature or fix that builds and is in a
+  good state.
+- **Whenever the user says we are stopping / pausing / "stopping for the day".**
+
+On each trigger, run:
+
+```
+git add -A
+git commit -m "<clear message describing what changed>"
+git push
+```
+
+Rules:
+- Write a **descriptive** commit message summarising what changed (never "wip"/"update").
+- **NEVER commit `.env` or any secrets/credentials.** `.env`, `.env*.local`, `node_modules`,
+  and `.next` are gitignored — keep them that way, and verify `.env` is NOT staged before
+  committing (e.g. `git status` / `git ls-files | grep .env` should only show `.env.example`).
+- Push to `origin/main`.
+- Prefer committing when the tree is in a good state (typecheck / lint / build / tests green).
+  If committing mid-work to avoid losing progress, say so in the commit message.
+- The remote is the private repo: https://github.com/msanad97-afk/Eversystems-Management
+
+## Secrets
+
+`.env` holds the DB password and Brevo SMTP key. It is intentionally NOT in the repo and
+must be recreated on each machine from `.env.example`. Never print, commit, or share it.
