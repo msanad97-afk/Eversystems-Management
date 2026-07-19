@@ -16,7 +16,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const activity = await prisma.activity.findUnique({
     where: { id: params.id },
-    select: { id: true, boqQuantity: true, asset: { select: { projectId: true } } },
+    select: { id: true, type: true, boqQuantity: true, asset: { select: { projectId: true } } },
   })
   if (!activity) return NextResponse.json({ error: 'Activity not found.' }, { status: 404 })
 
@@ -29,16 +29,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if ('ref' in body) data.ref = isNonEmptyString(body.ref) ? body.ref.trim() : null
   if (typeof body.isActive === 'boolean') data.isActive = body.isActive
   if (typeof body.sortOrder === 'number') data.sortOrder = body.sortOrder
-  if ('boqQuantity' in body) {
+  // BOQ quantity applies to MEASURED lines only.
+  if ('boqQuantity' in body && activity.type === 'MEASURED') {
     const boq = parsePositive(body.boqQuantity)
     if (boq === null) return NextResponse.json({ error: 'BOQ quantity must be greater than 0.' }, { status: 400 })
     data.boqQuantity = boq
+  }
+  // Lumpsum amount applies to LUMPSUM lines only (Q4: editable post-placement).
+  if ('lumpsumBhd' in body && activity.type === 'LUMPSUM') {
+    const lump = parsePositive(body.lumpsumBhd)
+    if (lump === null) return NextResponse.json({ error: 'The lumpsum amount must be greater than 0.' }, { status: 400 })
+    data.lumpsumBhd = lump
   }
 
   const updated = await prisma.activity.update({
     where: { id: activity.id },
     data,
-    select: { id: true, ref: true, name: true, unit: true, boqQuantity: true, isActive: true, sortOrder: true },
+    select: { id: true, ref: true, name: true, unit: true, boqQuantity: true, lumpsumBhd: true, isActive: true, sortOrder: true },
   })
 
   writeAuditLog({
@@ -52,5 +59,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     ipAddress: getClientIp(req),
   })
 
-  return NextResponse.json({ activity: { ...updated, boqQuantity: Number(updated.boqQuantity) } })
+  return NextResponse.json({
+    activity: {
+      ...updated,
+      boqQuantity: Number(updated.boqQuantity),
+      lumpsumBhd: updated.lumpsumBhd == null ? null : Number(updated.lumpsumBhd),
+    },
+  })
 }

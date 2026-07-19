@@ -114,7 +114,7 @@ export default async function ReportPage({ params }: { params: { id: string } })
             assetName: ra.activity.asset.name,
             activityRef: ra.activity.ref,
             activityName: ra.activity.name,
-            unit: ra.activity.unit,
+            unit: ra.activity.unit ?? '',
             quantityDone: Number(ra.quantityDone),
             cumulativePercent: cumulativePercent(earned.get(ra.activityId) ?? 0, Number(ra.activity.boqQuantity)),
             note: ra.note,

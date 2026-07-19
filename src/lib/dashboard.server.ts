@@ -116,12 +116,14 @@ export async function loadDashboard(input: {
 
   // ─── Physical progress: active assets→activities for the scoped active projects,
   // earned = APPROVED-only quantityDone as of the range end date (`to`). ───
+  // Only MEASURED activities have a physical % (LUMPSUM tracks BHD earned value, Phase C2),
+  // so lumpsum lines are excluded from the physical-progress aggregate.
   const assetsForProgress = await prisma.asset.findMany({
-    where: { projectId: { in: activeProjects.map((p) => p.id) }, isActive: true, activities: { some: { isActive: true } } },
+    where: { projectId: { in: activeProjects.map((p) => p.id) }, isActive: true, activities: { some: { isActive: true, type: 'MEASURED' } } },
     orderBy: [{ projectId: 'asc' }, { sortOrder: 'asc' }],
     select: {
       id: true, name: true, projectId: true,
-      activities: { where: { isActive: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, ref: true, name: true, unit: true, boqQuantity: true } },
+      activities: { where: { isActive: true, type: 'MEASURED' }, orderBy: { sortOrder: 'asc' }, select: { id: true, ref: true, name: true, unit: true, boqQuantity: true } },
     },
   })
   const progActivityIds = assetsForProgress.flatMap((a) => a.activities.map((x) => x.id))
@@ -144,7 +146,7 @@ export async function loadDashboard(input: {
       activityId: act.id,
       ref: act.ref,
       name: act.name,
-      unit: act.unit,
+      unit: act.unit ?? '',
       boqQuantity: Number(act.boqQuantity),
       earned: earnedMap.get(act.id) ?? 0,
     })),

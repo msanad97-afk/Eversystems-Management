@@ -170,7 +170,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const capInputs: ActivityInput[] = parsed.map((a) => ({
     activityId: a.activityId,
     activityName: meta.get(a.activityId)?.name,
-    unit: meta.get(a.activityId)?.unit,
+    unit: meta.get(a.activityId)?.unit ?? undefined,
     quantityDone: a.quantityDone,
     remaining: remaining.get(a.activityId)?.remaining ?? 0,
     manpower: a.manpower,

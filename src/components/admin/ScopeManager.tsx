@@ -13,10 +13,14 @@ export interface ScopeActivityData {
   id: string
   ref: string | null
   name: string
-  unit: string
+  type: 'MEASURED' | 'LUMPSUM'
+  unit: string | null
   boqQuantity: number
+  lumpsumBhd: number | null
   isActive: boolean
   sortOrder: number
+  fromCatalog: boolean
+  subActivityCount: number
 }
 export interface ScopeAssetData {
   id: string
@@ -27,15 +31,28 @@ export interface ScopeAssetData {
   sortOrder: number
   activities: ScopeActivityData[]
 }
+export interface CatalogOption {
+  id: string
+  name: string
+  type: 'MEASURED' | 'LUMPSUM'
+  unit: string | null
+  lumpsumBhd: number | null
+}
+
+function bhd(n: number): string {
+  return `BHD ${n.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`
+}
 
 export function ScopeManager({
   projectId,
   assets,
   unitSuggestions,
+  catalogOptions,
 }: {
   projectId: string
   assets: ScopeAssetData[]
   unitSuggestions: string[]
+  catalogOptions: CatalogOption[]
 }) {
   const router = useRouter()
   const { showToast } = useToast()
@@ -123,6 +140,9 @@ export function ScopeManager({
         <p className="mt-1 text-xs text-fg-subtle">
           Columns: asset, activity ref, activity name, unit, boq quantity. Assets are created as needed.
         </p>
+        <p className="mt-1 text-xs font-medium text-warning">
+          Measured activities only — lumpsum lines and catalog budgets can&apos;t be imported; add those below.
+        </p>
         <div className="mt-2 flex items-center gap-2">
           <input ref={fileRef} type="file" accept=".csv,text/csv" className="text-sm" />
           <Button variant="secondary" size="sm" onClick={onImport} loading={busy}>Import</Button>
@@ -180,7 +200,14 @@ export function ScopeManager({
                         <ReorderButtons onUp={() => move('activities', asset.activities, xi, -1)} onDown={() => move('activities', asset.activities, xi, 1)} first={xi === 0} last={xi === asset.activities.length - 1} />
                         <div className="min-w-0 flex-1">
                           <span className="text-sm text-fg">{act.ref ? `${act.ref} · ` : ''}{act.name}</span>
-                          <span className="ml-2 text-xs text-fg-subtle">BOQ {act.boqQuantity} {act.unit}</span>
+                          {act.type === 'LUMPSUM' ? (
+                            <span className="ml-2 text-xs text-fg-subtle">{act.lumpsumBhd != null ? bhd(act.lumpsumBhd) : 'lumpsum'}</span>
+                          ) : (
+                            <span className="ml-2 text-xs text-fg-subtle">BOQ {act.boqQuantity} {act.unit ?? ''}</span>
+                          )}
+                          {act.type === 'LUMPSUM' && <Badge tone="warning" className="ml-2">lumpsum</Badge>}
+                          {act.fromCatalog && <Badge tone="info" className="ml-2">catalog</Badge>}
+                          {act.subActivityCount > 0 && <Badge tone="neutral" className="ml-2">{act.subActivityCount} sub</Badge>}
                           {!act.isActive && <Badge tone="neutral" className="ml-2">inactive</Badge>}
                         </div>
                         <Button size="sm" variant="ghost" onClick={() => setEditActivity(act)}>Edit</Button>
@@ -191,7 +218,13 @@ export function ScopeManager({
                     ))}
                   </div>
                 )}
-                <AddActivity assetId={asset.id} unitSuggestions={unitSuggestions} onAdd={(body) => call('POST', `/api/assets/${asset.id}/activities`, body)} busy={busy} />
+                <AddActivity
+                  assetId={asset.id}
+                  unitSuggestions={unitSuggestions}
+                  catalogOptions={catalogOptions}
+                  onAdd={(body) => call('POST', `/api/assets/${asset.id}/activities`, body)}
+                  busy={busy}
+                />
               </div>
             </div>
           ))}
@@ -252,43 +285,129 @@ function UnitInput({ value, onChange, unitSuggestions }: { value: string; onChan
   )
 }
 
+type AddMode = 'measured' | 'lumpsum' | 'catalog'
+
 function AddActivity({
   assetId,
   unitSuggestions,
+  catalogOptions,
   onAdd,
   busy,
 }: {
   assetId: string
   unitSuggestions: string[]
-  onAdd: (body: { name: string; ref: string | null; unit: string; boqQuantity: number }) => Promise<boolean>
+  catalogOptions: CatalogOption[]
+  onAdd: (body: Record<string, unknown>) => Promise<boolean>
   busy: boolean
 }) {
+  const [mode, setMode] = useState<AddMode>('measured')
   const [name, setName] = useState('')
   const [ref, setRef] = useState('')
   const [unit, setUnit] = useState('')
   const [boq, setBoq] = useState('')
-  const valid = name.trim() && unit.trim() && Number(boq) > 0
+  const [lumpsum, setLumpsum] = useState('')
+  const [catalogId, setCatalogId] = useState('')
+
+  const selectedCatalog = catalogOptions.find((c) => c.id === catalogId) ?? null
+
+  function reset() {
+    setName(''); setRef(''); setUnit(''); setBoq(''); setLumpsum(''); setCatalogId('')
+  }
+
+  const valid =
+    mode === 'measured'
+      ? name.trim() && unit.trim() && Number(boq) > 0
+      : mode === 'lumpsum'
+        ? name.trim() && Number(lumpsum) > 0
+        : !!selectedCatalog && (selectedCatalog.type === 'MEASURED' ? Number(boq) > 0 : true)
 
   async function submit() {
     if (!valid) return
-    if (await onAdd({ name: name.trim(), ref: ref.trim() || null, unit: unit.trim(), boqQuantity: Number(boq) })) {
-      setName(''); setRef(''); setUnit(''); setBoq('')
+    let body: Record<string, unknown>
+    if (mode === 'measured') {
+      body = { type: 'MEASURED', name: name.trim(), ref: ref.trim() || null, unit: unit.trim(), boqQuantity: Number(boq) }
+    } else if (mode === 'lumpsum') {
+      body = { type: 'LUMPSUM', name: name.trim(), ref: ref.trim() || null, lumpsumBhd: Number(lumpsum) }
+    } else {
+      body = {
+        catalogActivityId: selectedCatalog!.id,
+        ref: ref.trim() || null,
+        ...(selectedCatalog!.type === 'MEASURED' ? { boqQuantity: Number(boq) } : {}),
+        ...(selectedCatalog!.type === 'LUMPSUM' && lumpsum.trim() ? { lumpsumBhd: Number(lumpsum) } : {}),
+      }
     }
+    if (await onAdd(body)) reset()
   }
 
   return (
-    <div className="mt-2 flex flex-wrap items-end gap-2 border-t border-border pt-3">
-      <div className="w-20">
-        <Input label="Ref" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="3.2.1" />
+    <div className="mt-2 space-y-2 border-t border-border pt-3">
+      <div className="flex flex-wrap gap-1">
+        {(['measured', 'lumpsum', 'catalog'] as AddMode[]).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => { setMode(m); reset() }}
+            disabled={m === 'catalog' && catalogOptions.length === 0}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium disabled:opacity-40 ${mode === m ? 'bg-primary-50 text-primary-700' : 'text-fg-muted'}`}
+          >
+            {m === 'measured' ? 'One-off measured' : m === 'lumpsum' ? 'One-off lumpsum' : 'From catalog'}
+          </button>
+        ))}
       </div>
-      <div className="min-w-[35%] flex-1">
-        <Input label="Activity" value={name} onChange={(e) => setName(e.target.value)} placeholder="Blockwork 200mm" />
+
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="w-20">
+          <Input label="Ref" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="3.2.1" />
+        </div>
+
+        {mode === 'catalog' ? (
+          <>
+            <div className="min-w-[35%] flex-1">
+              <label className="mb-1 block text-sm font-medium text-fg">Catalog activity</label>
+              <select
+                value={catalogId}
+                onChange={(e) => setCatalogId(e.target.value)}
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg"
+              >
+                <option value="">Select…</option>
+                {catalogOptions.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.type === 'MEASURED' ? c.unit ?? 'measured' : 'lumpsum'})</option>
+                ))}
+              </select>
+            </div>
+            {selectedCatalog?.type === 'MEASURED' && (
+              <div className="w-24">
+                <Input label={`BOQ qty${selectedCatalog.unit ? ` (${selectedCatalog.unit})` : ''}`} type="number" inputMode="decimal" min={0} step="any" value={boq} onChange={(e) => setBoq(e.target.value)} />
+              </div>
+            )}
+            {selectedCatalog?.type === 'LUMPSUM' && (
+              <div className="w-32">
+                <Input label="BHD (override)" type="number" inputMode="decimal" min={0} step="any" value={lumpsum} onChange={(e) => setLumpsum(e.target.value)} placeholder={selectedCatalog.lumpsumBhd != null ? String(selectedCatalog.lumpsumBhd) : ''} />
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="min-w-[35%] flex-1">
+              <Input label="Activity" value={name} onChange={(e) => setName(e.target.value)} placeholder={mode === 'lumpsum' ? 'Scaffolding' : 'Blockwork 200mm'} />
+            </div>
+            {mode === 'measured' ? (
+              <>
+                <div className="w-24"><UnitInput value={unit} onChange={setUnit} unitSuggestions={unitSuggestions} /></div>
+                <div className="w-24">
+                  <Input label="BOQ qty" type="number" inputMode="decimal" min={0} step="any" value={boq} onChange={(e) => setBoq(e.target.value)} />
+                </div>
+              </>
+            ) : (
+              <div className="w-32">
+                <Input label="BHD amount" type="number" inputMode="decimal" min={0} step="any" value={lumpsum} onChange={(e) => setLumpsum(e.target.value)} />
+              </div>
+            )}
+          </>
+        )}
+
+        <Button size="sm" onClick={submit} loading={busy} disabled={!valid} aria-label={`Add activity to asset ${assetId}`}>Add</Button>
       </div>
-      <div className="w-24"><UnitInput value={unit} onChange={setUnit} unitSuggestions={unitSuggestions} /></div>
-      <div className="w-24">
-        <Input label="BOQ qty" type="number" inputMode="decimal" min={0} step="any" value={boq} onChange={(e) => setBoq(e.target.value)} />
-      </div>
-      <Button size="sm" onClick={submit} loading={busy} disabled={!valid} aria-label={`Add activity to asset ${assetId}`}>Add</Button>
     </div>
   )
 }
@@ -310,21 +429,41 @@ function EditAssetForm({ asset, busy, onSave, onCancel }: { asset: ScopeAssetDat
   )
 }
 
-function EditActivityForm({ activity, unitSuggestions, busy, onSave, onCancel }: { activity: ScopeActivityData; unitSuggestions: string[]; busy: boolean; onSave: (b: { name: string; ref: string | null; unit: string; boqQuantity: number }) => void; onCancel: () => void }) {
+function EditActivityForm({ activity, unitSuggestions, busy, onSave, onCancel }: { activity: ScopeActivityData; unitSuggestions: string[]; busy: boolean; onSave: (b: Record<string, unknown>) => void; onCancel: () => void }) {
   const [name, setName] = useState(activity.name)
   const [ref, setRef] = useState(activity.ref ?? '')
-  const [unit, setUnit] = useState(activity.unit)
+  const [unit, setUnit] = useState(activity.unit ?? '')
   const [boq, setBoq] = useState(String(activity.boqQuantity))
-  const valid = name.trim() && unit.trim() && Number(boq) > 0
+  const [lumpsum, setLumpsum] = useState(activity.lumpsumBhd != null ? String(activity.lumpsumBhd) : '')
+
+  const valid =
+    activity.type === 'LUMPSUM'
+      ? name.trim() && Number(lumpsum) > 0
+      : name.trim() && unit.trim() && Number(boq) > 0
+
+  function save() {
+    if (activity.type === 'LUMPSUM') {
+      onSave({ name: name.trim(), ref: ref.trim() || null, lumpsumBhd: Number(lumpsum) })
+    } else {
+      onSave({ name: name.trim(), ref: ref.trim() || null, unit: unit.trim(), boqQuantity: Number(boq) })
+    }
+  }
+
   return (
     <div className="space-y-3">
       <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
       <Input label="Ref (optional)" value={ref} onChange={(e) => setRef(e.target.value)} />
-      <UnitInput value={unit} onChange={setUnit} unitSuggestions={unitSuggestions} />
-      <Input label="BOQ quantity" type="number" inputMode="decimal" min={0} step="any" value={boq} onChange={(e) => setBoq(e.target.value)} hint="Lowering below earned-to-date is allowed; history is preserved." />
+      {activity.type === 'LUMPSUM' ? (
+        <Input label="Lumpsum (BHD)" type="number" inputMode="decimal" min={0} step="any" value={lumpsum} onChange={(e) => setLumpsum(e.target.value)} />
+      ) : (
+        <>
+          <UnitInput value={unit} onChange={setUnit} unitSuggestions={unitSuggestions} />
+          <Input label="BOQ quantity" type="number" inputMode="decimal" min={0} step="any" value={boq} onChange={(e) => setBoq(e.target.value)} hint="Lowering below earned-to-date is allowed; history is preserved." />
+        </>
+      )}
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
-        <Button onClick={() => onSave({ name: name.trim(), ref: ref.trim() || null, unit: unit.trim(), boqQuantity: Number(boq) })} loading={busy} disabled={!valid}>Save</Button>
+        <Button onClick={save} loading={busy} disabled={!valid}>Save</Button>
       </div>
     </div>
   )

@@ -60,15 +60,17 @@ export async function loadReportableScope(
   projectId: string,
   excludeReportId?: string,
 ): Promise<ScopeAsset[]> {
+  // Rev 2: only MEASURED activities are reportable through this form (LUMPSUM reporting
+  // arrives in Phase C2), so lumpsum lines never appear in the report pick-list.
   const assets = await prisma.asset.findMany({
-    where: { projectId, isActive: true, activities: { some: { isActive: true } } },
+    where: { projectId, isActive: true, activities: { some: { isActive: true, type: 'MEASURED' } } },
     orderBy: { sortOrder: 'asc' },
     select: {
       id: true,
       ref: true,
       name: true,
       activities: {
-        where: { isActive: true },
+        where: { isActive: true, type: 'MEASURED' },
         orderBy: { sortOrder: 'asc' },
         select: { id: true, ref: true, name: true, unit: true, boqQuantity: true },
       },
@@ -92,7 +94,7 @@ export async function loadReportableScope(
         id: act.id,
         ref: act.ref,
         name: act.name,
-        unit: act.unit,
+        unit: act.unit ?? '',
         boqQuantity: boq,
         earned: earned.get(act.id) ?? 0,
         committed: committedQ,
@@ -163,7 +165,7 @@ export async function loadFormScope(
       id: act.id,
       ref: act.ref,
       name: act.name,
-      unit: act.unit,
+      unit: act.unit ?? '',
       boqQuantity: Number(act.boqQuantity),
       earned: earned.get(act.id) ?? 0,
       committed: r?.committed ?? 0,
@@ -176,7 +178,7 @@ export async function loadFormScope(
 /** Whether a project has at least one active activity (mandatory-setup gate). */
 export async function projectHasActiveActivities(projectId: string): Promise<boolean> {
   const count = await prisma.activity.count({
-    where: { isActive: true, asset: { projectId, isActive: true } },
+    where: { isActive: true, type: 'MEASURED', asset: { projectId, isActive: true } },
   })
   return count > 0
 }
@@ -255,7 +257,7 @@ export async function activityLedger(activityId: string): Promise<ActivityLedger
       id: activity.id,
       ref: activity.ref,
       name: activity.name,
-      unit: activity.unit,
+      unit: activity.unit ?? '',
       assetName: activity.asset.name,
       projectId: activity.asset.projectId,
     },

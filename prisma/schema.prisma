@@ -39,6 +39,14 @@ enum ReportStatus {
   REJECTED // Returned to author with a note — author edits and resubmits
 }
 
+// Revision 2: a reportable line is either MEASURED (priced on the parent activity's
+// unit, built up from labour + material rates) or LUMPSUM (a fixed BHD total that
+// does not scale with quantity).
+enum LineType {
+  MEASURED
+  LUMPSUM
+}
+
 enum AuditAction {
   USER_LOGIN
   USER_LOGIN_FAILED
@@ -62,6 +70,10 @@ enum AuditAction {
   ASSET_UPDATED
   ACTIVITY_CREATED
   ACTIVITY_UPDATED
+  CATALOG_ACTIVITY_CREATED
+  CATALOG_ACTIVITY_UPDATED
+  CATALOG_ACTIVITY_DELETED
+  ACTIVITY_PLACED_FROM_CATALOG
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -105,9 +117,10 @@ model Project {
   createdBy   String
 
   // ─── Financials (Phase 6). Nullable; unused until then. ───
-  contractValue    Decimal?  @db.Decimal(18, 2)
+  // Money amounts carry 3 decimals (BHD fils), consistent with all BHD fields.
+  contractValue    Decimal?  @db.Decimal(18, 3)
   currency         String    @default("BHD")
-  budgetCost       Decimal?  @db.Decimal(18, 2)
+  budgetCost       Decimal?  @db.Decimal(18, 3)
   retentionPct     Decimal?  @db.Decimal(5, 2)
   advancePct       Decimal?  @db.Decimal(5, 2)
   paymentTermsDays Int?      @default(45)
@@ -145,7 +158,9 @@ model LaborCategory {
   sortOrder  Int      @default(0)
   hourlyRate Decimal? @db.Decimal(10, 3) // Phase 6: cost per man-hour
 
-  entries ManpowerEntry[]
+  entries            ManpowerEntry[]
+  catalogRates       CatalogManpowerRate[]
+  subActivityBudgets SubActivityManpowerBudget[]
 }
 
 model Material {
@@ -156,7 +171,70 @@ model Material {
   sortOrder Int      @default(0)
   unitRate  Decimal? @db.Decimal(12, 3) // Phase 6: cost per unit
 
-  entries MaterialEntry[]
+  entries            MaterialEntry[]
+  catalogRates       CatalogMaterialRate[]
+  subActivityBudgets SubActivityMaterialBudget[]
+}
+
+// ─── CATALOG ACTIVITIES (Rev 2) ───────────────────────────────────────────────
+// Reusable activity templates carrying built-in budgets. Placing one on a project
+// asset deep-copies it into project-owned rows (Activity/SubActivity/budget) — see
+// SubActivity. Templates are soft-deactivated for normal use, but may be hard-deleted;
+// because placement is a copy, neither edit nor delete affects any live project.
+
+model CatalogActivity {
+  id          String   @id @default(cuid())
+  name        String   @unique // "EIFS", "Blockwork 200mm"
+  type        LineType @default(MEASURED)
+  unit        String? // required if MEASURED; null for a pure-LUMPSUM activity
+  lumpsumBhd  Decimal? @db.Decimal(18, 3) // default BHD if this whole activity is LUMPSUM
+  description String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  subActivities CatalogSubActivity[]
+  placements    Activity[] // instances snapshotted from this template (provenance)
+}
+
+model CatalogSubActivity {
+  id                String   @id @default(cuid())
+  catalogActivityId String
+  name              String
+  type              LineType @default(MEASURED)
+  lumpsumBhd        Decimal? @db.Decimal(18, 3) // default BHD if this sub-activity is LUMPSUM
+  sortOrder         Int      @default(0)
+  isImplicit        Boolean  @default(false) // hidden line carrying a flat activity's rates
+
+  catalogActivity CatalogActivity       @relation(fields: [catalogActivityId], references: [id], onDelete: Cascade)
+  manpowerRates   CatalogManpowerRate[]
+  materialRates   CatalogMaterialRate[]
+
+  @@unique([catalogActivityId, name])
+}
+
+model CatalogManpowerRate {
+  id                   String  @id @default(cuid())
+  catalogSubActivityId String
+  laborCategoryId      String
+  hoursPerUnit         Decimal @db.Decimal(10, 4) // e.g. 0.3 mason-hours per m2
+
+  catalogSubActivity CatalogSubActivity @relation(fields: [catalogSubActivityId], references: [id], onDelete: Cascade)
+  category           LaborCategory      @relation(fields: [laborCategoryId], references: [id])
+
+  @@unique([catalogSubActivityId, laborCategoryId])
+}
+
+model CatalogMaterialRate {
+  id                   String  @id @default(cuid())
+  catalogSubActivityId String
+  materialId           String
+  qtyPerUnit           Decimal @db.Decimal(12, 4) // e.g. 5 kg adhesive per m2
+
+  catalogSubActivity CatalogSubActivity @relation(fields: [catalogSubActivityId], references: [id], onDelete: Cascade)
+  material           Material           @relation(fields: [materialId], references: [id])
+
+  @@unique([catalogSubActivityId, materialId])
 }
 
 // ─── DAILY REPORTS ──────────────────────────────────────────────────────────
@@ -214,20 +292,82 @@ model Activity {
   assetId     String
   ref         String? // optional BOQ item no., e.g. "3.2.1"
   name        String
-  unit        String
-  boqQuantity Decimal  @db.Decimal(14, 3) // contracted/planned quantity — the CAP
+  // Rev 2: MEASURED lines carry a unit + boqQuantity (the CAP). LUMPSUM lines carry a
+  // fixed lumpsumBhd instead and have no unit (unit null, boqQuantity 0, never read).
+  type        LineType @default(MEASURED)
+  unit        String? // required for MEASURED; null for LUMPSUM
+  boqQuantity Decimal  @db.Decimal(14, 3) // contracted/planned quantity — the CAP (0 for LUMPSUM)
+  lumpsumBhd  Decimal? @db.Decimal(18, 3) // fixed BHD if this whole activity is LUMPSUM (frozen at placement)
   sortOrder   Int      @default(0)
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
+
+  // Provenance only — which catalog template this was snapshotted from (null = one-off).
+  // NEVER read when deriving a budget; SetNull so deleting the template can't touch this row.
+  catalogActivityId String?
 
   // ─── Phase 6 (nullable, unused until then): unit rates for bottom-up EVM. ───
   costRate Decimal? @db.Decimal(14, 3) // planned cost per unit — budget / AC basis
   billRate Decimal? @db.Decimal(14, 3) // contract value per unit — PV / earned revenue
 
-  asset    Asset            @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  progress ReportActivity[]
+  asset           Asset            @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  catalogActivity CatalogActivity? @relation(fields: [catalogActivityId], references: [id], onDelete: SetNull)
+  subActivities   SubActivity[]
+  progress        ReportActivity[]
 
   @@index([assetId])
+  @@index([catalogActivityId])
+}
+
+// ─── PROJECT-OWNED SUB-ACTIVITIES (Rev 2, snapshot/frozen at placement) ───────
+// A reportable line is a SubActivity (when the activity has them) or the activity
+// itself (flat one-off). A MEASURED activity with rates but no named sub-activities
+// stores them on a single implicit SubActivity (isImplicit) — never shown in any UI —
+// so budget + reporting always run one code path at the sub-activity level.
+// The budget rows below hold COPIES of the catalog rates; they have NO foreign key
+// back to the catalog, so editing/deleting a catalog activity never touches them.
+
+model SubActivity {
+  id         String   @id @default(cuid())
+  activityId String
+  name       String
+  type       LineType @default(MEASURED)
+  lumpsumBhd Decimal? @db.Decimal(18, 3) // frozen BHD if this sub-activity is LUMPSUM
+  sortOrder  Int      @default(0)
+  isActive   Boolean  @default(true)
+  isImplicit Boolean  @default(false) // the hidden single line carrying a flat activity's rates
+  createdAt  DateTime @default(now())
+
+  activity       Activity                    @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  manpowerBudget SubActivityManpowerBudget[]
+  materialBudget SubActivityMaterialBudget[]
+
+  @@unique([activityId, name])
+  @@index([activityId])
+}
+
+model SubActivityManpowerBudget {
+  id              String  @id @default(cuid())
+  subActivityId   String
+  laborCategoryId String
+  hoursPerUnit    Decimal @db.Decimal(10, 4) // frozen copy of the catalog rate
+
+  subActivity SubActivity   @relation(fields: [subActivityId], references: [id], onDelete: Cascade)
+  category    LaborCategory @relation(fields: [laborCategoryId], references: [id])
+
+  @@unique([subActivityId, laborCategoryId])
+}
+
+model SubActivityMaterialBudget {
+  id            String  @id @default(cuid())
+  subActivityId String
+  materialId    String
+  qtyPerUnit    Decimal @db.Decimal(12, 4) // frozen copy of the catalog rate
+
+  subActivity SubActivity @relation(fields: [subActivityId], references: [id], onDelete: Cascade)
+  material    Material    @relation(fields: [materialId], references: [id])
+
+  @@unique([subActivityId, materialId])
 }
 
 model ReportActivity {
@@ -371,11 +511,11 @@ model Valuation {
   projectId       String
   periodMonth     DateTime        @db.Date
   progressPct     Decimal         @db.Decimal(6, 3)
-  grossAmount     Decimal         @db.Decimal(18, 2)
-  previousGross   Decimal         @db.Decimal(18, 2)
-  retentionHeld   Decimal         @db.Decimal(18, 2)
-  advanceRecovery Decimal         @db.Decimal(18, 2)
-  netPayable      Decimal         @db.Decimal(18, 2)
+  grossAmount     Decimal         @db.Decimal(18, 3)
+  previousGross   Decimal         @db.Decimal(18, 3)
+  retentionHeld   Decimal         @db.Decimal(18, 3)
+  advanceRecovery Decimal         @db.Decimal(18, 3)
+  netPayable      Decimal         @db.Decimal(18, 3)
   status          ValuationStatus @default(DRAFT)
   certifiedAt     DateTime?
   expectedReceipt DateTime?       @db.Date
@@ -396,7 +536,7 @@ model Expense {
   description String
   vendor      String?
   expenseDate DateTime        @db.Date
-  amount      Decimal         @db.Decimal(18, 2)
+  amount      Decimal         @db.Decimal(18, 3)
   createdAt   DateTime        @default(now())
   createdBy   String
 
@@ -409,7 +549,7 @@ model BankAccount {
   id             String   @id @default(cuid())
   name           String
   currency       String   @default("BHD")
-  openingBalance Decimal  @db.Decimal(18, 2)
+  openingBalance Decimal  @db.Decimal(18, 3)
   openingDate    DateTime @db.Date
   isActive       Boolean  @default(true)
 
@@ -422,7 +562,7 @@ model CashTransaction {
   txnDate     DateTime      @db.Date
   direction   CashDirection
   category    CashCategory
-  amount      Decimal       @db.Decimal(18, 2)
+  amount      Decimal       @db.Decimal(18, 3)
   description String
   projectId   String?
   valuationId String?

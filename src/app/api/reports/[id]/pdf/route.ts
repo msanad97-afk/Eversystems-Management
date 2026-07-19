@@ -42,7 +42,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     assetName: ra.activity.asset.name,
     activityName: ra.activity.name,
     ref: ra.activity.ref,
-    unit: ra.activity.unit,
+    unit: ra.activity.unit ?? '',
     quantityDone: Number(ra.quantityDone),
     cumulativePercent: cumulativePercent(earned.get(ra.activityId) ?? 0, Number(ra.activity.boqQuantity)),
     note: ra.note,

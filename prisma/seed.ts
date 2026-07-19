@@ -83,6 +83,52 @@ async function main() {
   }
   console.info(`Seeded ${MATERIALS.length} materials.`)
 
+  // ─── 3.5 Demo catalog activity (EIFS) — measured + lumpsum sub-activities ───
+  const eifsExists = await prisma.catalogActivity.findUnique({ where: { name: 'EIFS' } })
+  if (!eifsExists) {
+    const mason = await prisma.laborCategory.findUnique({ where: { name: 'Mason' } })
+    const helper = await prisma.laborCategory.findUnique({ where: { name: 'Helper/Labourer' } })
+    const cement = await prisma.material.findUnique({ where: { name: 'OPC Cement' } })
+    if (mason && helper && cement) {
+      await prisma.catalogActivity.create({
+        data: {
+          name: 'EIFS',
+          type: 'MEASURED',
+          unit: 'm2',
+          description: 'External insulation & finish system (demo template).',
+          sortOrder: 0,
+          subActivities: {
+            create: [
+              {
+                name: 'Base coat + mesh',
+                type: 'MEASURED',
+                sortOrder: 0,
+                manpowerRates: { create: [{ laborCategoryId: mason.id, hoursPerUnit: 0.3 }] },
+                materialRates: { create: [{ materialId: cement.id, qtyPerUnit: 0.5 }] },
+              },
+              {
+                name: 'Finish coat',
+                type: 'MEASURED',
+                sortOrder: 1,
+                manpowerRates: { create: [{ laborCategoryId: helper.id, hoursPerUnit: 0.2 }] },
+                materialRates: { create: [] },
+              },
+              {
+                name: 'Scaffolding',
+                type: 'LUMPSUM',
+                lumpsumBhd: 2500,
+                sortOrder: 2,
+              },
+            ],
+          },
+        },
+      })
+      console.info('Seeded demo catalog activity "EIFS" (2 measured sub-activities + 1 lumpsum).')
+    }
+  } else {
+    console.info('Catalog activity "EIFS" already exists — skipping.')
+  }
+
   // ─── 4. Demo project (PRJ-2026-001) ───
   const admin = await prisma.user.findUnique({ where: { email: adminEmail } })
   const demoExists = await prisma.project.findFirst({ where: { name: 'Demo Site' } })

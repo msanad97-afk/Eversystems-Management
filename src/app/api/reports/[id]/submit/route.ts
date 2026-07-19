@@ -43,7 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const activities: ActivityInput[] = report.activities.map((a) => ({
     activityId: a.activityId,
     activityName: a.activity.name,
-    unit: a.activity.unit,
+    unit: a.activity.unit ?? undefined,
     quantityDone: Number(a.quantityDone),
     remaining: remaining.get(a.activityId)?.remaining ?? 0,
     manpower: a.manpower.map((m) => ({ categoryId: m.categoryId, headcount: m.headcount, hours: Number(m.hours) })),
