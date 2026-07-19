@@ -85,3 +85,46 @@ export async function PATCH(req: NextRequest) {
 
   return NextResponse.json({ category: updated })
 }
+
+/**
+ * Remove a labour category. Safe rule: if it has never been referenced (no report
+ * manpower entries, no catalog rate lines, no frozen budget rows) it is hard-deleted;
+ * if it IS referenced anywhere it is deactivated instead, hiding it from new pick-lists
+ * while preserving all history. The response says which happened so the UI can explain it.
+ */
+export async function DELETE(req: NextRequest) {
+  const guard = await requireAdmin()
+  if ('error' in guard) return guard.error
+
+  const body = await req.json().catch(() => null)
+  const id = isNonEmptyString(body?.id) ? body.id : null
+  if (!id) return NextResponse.json({ error: 'Category id is required.' }, { status: 400 })
+
+  const existing = await prisma.laborCategory.findUnique({
+    where: { id },
+    select: { id: true, name: true, _count: { select: { entries: true, catalogRates: true, subActivityBudgets: true } } },
+  })
+  if (!existing) return NextResponse.json({ error: 'Category not found.' }, { status: 404 })
+
+  const references = existing._count.entries + existing._count.catalogRates + existing._count.subActivityBudgets
+
+  if (references === 0) {
+    await prisma.laborCategory.delete({ where: { id } })
+    writeAuditLog({
+      action: 'CATALOG_UPDATED', userId: guard.user.id, entity: 'LaborCategory', entityId: id,
+      metadata: { op: 'delete', name: existing.name }, ipAddress: getClientIp(req),
+    })
+    return NextResponse.json({ ok: true, deleted: true, id })
+  }
+
+  const updated = await prisma.laborCategory.update({
+    where: { id },
+    data: { isActive: false },
+    select: { id: true, name: true, isActive: true, sortOrder: true },
+  })
+  writeAuditLog({
+    action: 'CATALOG_UPDATED', userId: guard.user.id, entity: 'LaborCategory', entityId: id,
+    metadata: { op: 'deactivate', reason: 'in_use', references: existing._count }, ipAddress: getClientIp(req),
+  })
+  return NextResponse.json({ ok: true, deactivated: true, id, category: updated, references: existing._count })
+}

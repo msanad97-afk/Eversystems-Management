@@ -87,3 +87,46 @@ export async function PATCH(req: NextRequest) {
 
   return NextResponse.json({ material: updated })
 }
+
+/**
+ * Remove a material. Safe rule: if it has never been referenced (no report entries, no
+ * catalog rate lines, no frozen budget rows) it is hard-deleted; if it IS referenced
+ * anywhere it is deactivated instead, hiding it from new pick-lists while preserving all
+ * history. The response says which happened so the UI can explain it.
+ */
+export async function DELETE(req: NextRequest) {
+  const guard = await requireAdmin()
+  if ('error' in guard) return guard.error
+
+  const body = await req.json().catch(() => null)
+  const id = isNonEmptyString(body?.id) ? body.id : null
+  if (!id) return NextResponse.json({ error: 'Material id is required.' }, { status: 400 })
+
+  const existing = await prisma.material.findUnique({
+    where: { id },
+    select: { id: true, name: true, _count: { select: { entries: true, catalogRates: true, subActivityBudgets: true } } },
+  })
+  if (!existing) return NextResponse.json({ error: 'Material not found.' }, { status: 404 })
+
+  const references = existing._count.entries + existing._count.catalogRates + existing._count.subActivityBudgets
+
+  if (references === 0) {
+    await prisma.material.delete({ where: { id } })
+    writeAuditLog({
+      action: 'CATALOG_UPDATED', userId: guard.user.id, entity: 'Material', entityId: id,
+      metadata: { op: 'delete', name: existing.name }, ipAddress: getClientIp(req),
+    })
+    return NextResponse.json({ ok: true, deleted: true, id })
+  }
+
+  const updated = await prisma.material.update({
+    where: { id },
+    data: { isActive: false },
+    select: { id: true, name: true, unit: true, isActive: true, sortOrder: true },
+  })
+  writeAuditLog({
+    action: 'CATALOG_UPDATED', userId: guard.user.id, entity: 'Material', entityId: id,
+    metadata: { op: 'deactivate', reason: 'in_use', references: existing._count }, ipAddress: getClientIp(req),
+  })
+  return NextResponse.json({ ok: true, deactivated: true, id, material: updated, references: existing._count })
+}

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
@@ -23,6 +24,7 @@ const ENDPOINT: Record<Kind, string> = {
 const RESP_KEY: Record<Kind, string> = { labor: 'category', material: 'material' }
 
 export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogItem[] }) {
+  const router = useRouter()
   const { showToast } = useToast()
   const [items, setItems] = useState<CatalogItem[]>(initial)
   const [name, setName] = useState('')
@@ -33,6 +35,7 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
   const [editUnit, setEditUnit] = useState('')
 
   const isMaterial = kind === 'material'
+  const noun = isMaterial ? 'Material' : 'Category'
 
   async function call(method: 'POST' | 'PATCH', body: unknown): Promise<CatalogItem | null> {
     const res = await fetch(ENDPOINT[kind], {
@@ -45,6 +48,8 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
       showToast(data.error ?? 'Something went wrong.', 'error')
       return null
     }
+    // Keep the server (and any tab remount) in sync with the DB.
+    router.refresh()
     return data[RESP_KEY[kind]] as CatalogItem
   }
 
@@ -75,6 +80,28 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
     if (updated) {
       setItems((prev) => prev.map((i) => (i.id === item.id ? updated : i)))
       showToast(updated.isActive ? 'Activated.' : 'Deactivated.', 'success')
+    }
+  }
+
+  async function remove(item: CatalogItem) {
+    if (!confirm(`Remove "${item.name}"? If it's in use anywhere it will be deactivated instead of deleted.`)) return
+    const res = await fetch(ENDPOINT[kind], {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: item.id }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      showToast(data.error ?? 'Something went wrong.', 'error')
+      return
+    }
+    router.refresh()
+    if (data.deleted) {
+      setItems((prev) => prev.filter((i) => i.id !== item.id))
+      showToast(`${noun} deleted.`, 'success')
+    } else if (data.deactivated) {
+      setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, isActive: false } : i)))
+      showToast('In use — deactivated instead of deleted (history preserved).', 'info')
     }
   }
 
@@ -177,13 +204,15 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
                 <Button size="sm" variant="ghost" onClick={() => toggleActive(item)}>
                   {item.isActive ? 'Deactivate' : 'Activate'}
                 </Button>
+                <Button size="sm" variant="ghost" onClick={() => remove(item)}>Delete</Button>
               </>
             )}
           </div>
         ))}
       </div>
       <p className="text-xs text-fg-subtle">
-        Deactivated entries stay on existing reports but are hidden from new pick-lists.
+        Delete removes an unused entry outright; anything referenced by a report or a catalog budget is
+        deactivated instead — hidden from new pick-lists but kept on all existing history.
       </p>
     </div>
   )
