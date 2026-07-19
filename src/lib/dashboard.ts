@@ -69,6 +69,85 @@ export interface DashboardResult {
   missingYesterday: { projectCode: string; name: string }[]
 }
 
+// ─── Physical progress (Phase 4, resumed) ────────────────────────────────────
+// Progress by asset/activity + a project physical %. Earned = APPROVED-only quantity
+// (as of the range end date); % = earned/BOQ capped at 100. The single project physical
+// % is the UNWEIGHTED average of its activities' %s (units differ, and value/cost rates
+// are Phase 6); it upgrades to value-weighted (billRate) once rates exist.
+
+export interface ProgressRow {
+  projectId: string
+  projectCode: string
+  projectName: string
+  assetId: string
+  assetName: string
+  activityId: string
+  ref: string | null
+  name: string
+  unit: string
+  boqQuantity: number
+  earned: number
+}
+export interface ProgressActivity {
+  activityId: string
+  ref: string | null
+  name: string
+  unit: string
+  boqQuantity: number
+  earned: number
+  percent: number
+  remaining: number
+}
+export interface ProgressAsset {
+  assetId: string
+  assetName: string
+  activities: ProgressActivity[]
+}
+export interface ProjectProgress {
+  projectId: string
+  projectCode: string
+  projectName: string
+  physicalPercent: number
+  activityCount: number
+  assets: ProgressAsset[]
+}
+
+function pctOf(earned: number, boq: number): number {
+  return boq > 0 ? Math.min(100, (earned / boq) * 100) : 0
+}
+
+/**
+ * Groups flat activity-earned rows (already ordered project → asset → activity) into a
+ * per-project progress tree. Physical % = unweighted mean of the project's activity %s.
+ */
+export function aggregateProgress(rows: ProgressRow[]): ProjectProgress[] {
+  const projects = new Map<string, ProjectProgress>()
+  for (const r of rows) {
+    let p = projects.get(r.projectId)
+    if (!p) {
+      p = { projectId: r.projectId, projectCode: r.projectCode, projectName: r.projectName, physicalPercent: 0, activityCount: 0, assets: [] }
+      projects.set(r.projectId, p)
+    }
+    let a = p.assets.find((x) => x.assetId === r.assetId)
+    if (!a) {
+      a = { assetId: r.assetId, assetName: r.assetName, activities: [] }
+      p.assets.push(a)
+    }
+    a.activities.push({
+      activityId: r.activityId, ref: r.ref, name: r.name, unit: r.unit,
+      boqQuantity: r.boqQuantity, earned: r.earned,
+      percent: pctOf(r.earned, r.boqQuantity),
+      remaining: Math.max(0, r.boqQuantity - r.earned),
+    })
+  }
+  for (const p of projects.values()) {
+    const acts = p.assets.flatMap((a) => a.activities)
+    p.activityCount = acts.length
+    p.physicalPercent = acts.length > 0 ? acts.reduce((s, x) => s + x.percent, 0) / acts.length : 0
+  }
+  return [...projects.values()]
+}
+
 /** Inclusive list of civil dates from `from` to `to`. Empty if from > to. */
 export function eachDay(from: string, to: string): string[] {
   const out: string[] = []

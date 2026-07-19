@@ -1,9 +1,12 @@
 import { prisma } from '@/lib/prisma'
 import {
   aggregateDashboard,
+  aggregateProgress,
   COUNTED_STATUSES,
   type DashReport,
   type DashboardResult,
+  type ProgressRow,
+  type ProjectProgress,
 } from '@/lib/dashboard'
 import {
   todayCivilString,
@@ -60,6 +63,7 @@ const reportSelect = {
 
 export interface DashboardResponse extends DashboardResult {
   range: { from: string; to: string }
+  progress: ProjectProgress[]
 }
 
 /** Fetches raw rows (index-friendly: status + reportDate range + optional projectId) and aggregates. */
@@ -110,5 +114,42 @@ export async function loadDashboard(input: {
     yesterdayReportedProjectIds: yesterdayRows.map((r) => r.projectId),
   })
 
-  return { range: { from, to }, ...result }
+  // ─── Physical progress: active assets→activities for the scoped active projects,
+  // earned = APPROVED-only quantityDone as of the range end date (`to`). ───
+  const assetsForProgress = await prisma.asset.findMany({
+    where: { projectId: { in: activeProjects.map((p) => p.id) }, isActive: true, activities: { some: { isActive: true } } },
+    orderBy: [{ projectId: 'asc' }, { sortOrder: 'asc' }],
+    select: {
+      id: true, name: true, projectId: true,
+      activities: { where: { isActive: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, ref: true, name: true, unit: true, boqQuantity: true } },
+    },
+  })
+  const progActivityIds = assetsForProgress.flatMap((a) => a.activities.map((x) => x.id))
+  const earnedRows = progActivityIds.length
+    ? await prisma.reportActivity.groupBy({
+        by: ['activityId'],
+        where: { activityId: { in: progActivityIds }, report: { status: 'APPROVED', reportDate: { lte: civilMidnightUtc(to) } } },
+        _sum: { quantityDone: true },
+      })
+    : []
+  const earnedMap = new Map(earnedRows.map((r) => [r.activityId, Number(r._sum.quantityDone ?? 0)]))
+  const projMeta = new Map(activeProjects.map((p) => [p.id, p]))
+  const progressRows: ProgressRow[] = assetsForProgress.flatMap((asset) =>
+    asset.activities.map((act) => ({
+      projectId: asset.projectId,
+      projectCode: projMeta.get(asset.projectId)?.projectCode ?? '',
+      projectName: projMeta.get(asset.projectId)?.name ?? '',
+      assetId: asset.id,
+      assetName: asset.name,
+      activityId: act.id,
+      ref: act.ref,
+      name: act.name,
+      unit: act.unit,
+      boqQuantity: Number(act.boqQuantity),
+      earned: earnedMap.get(act.id) ?? 0,
+    })),
+  )
+  const progress = aggregateProgress(progressRows).sort((a, b) => a.projectCode.localeCompare(b.projectCode))
+
+  return { range: { from, to }, ...result, progress }
 }

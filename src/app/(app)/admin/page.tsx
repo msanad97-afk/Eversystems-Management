@@ -6,6 +6,7 @@ import { ManpowerChart } from '@/components/admin/ManpowerChart'
 import { MaterialsTotalsTable } from '@/components/admin/MaterialsTotalsTable'
 import { MissingReportsAlert } from '@/components/admin/MissingReportsAlert'
 import { DashboardFilters } from '@/components/admin/DashboardFilters'
+import { ProgressPanel } from '@/components/admin/ProgressPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,7 +35,7 @@ export default async function AdminDashboardPage({
     }),
   ])
 
-  const { kpis, manHoursPerDay, materialTotals, missingYesterday, range } = data
+  const { kpis, manHoursPerDay, materialTotals, missingYesterday, range, progress } = data
   const coveragePct =
     kpis.reportsExpected > 0 ? Math.round((kpis.reportsSubmitted / kpis.reportsExpected) * 100) : 0
 
@@ -62,6 +63,14 @@ export default async function AdminDashboardPage({
 
       {/* Missing-report alert */}
       <MissingReportsAlert missing={missingYesterday} />
+
+      {/* Physical progress by asset/activity */}
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">
+          Physical progress{projectId ? '' : ' by project'}
+        </h2>
+        <ProgressPanel progress={progress} selectedProjectId={projectId} />
+      </section>
 
       {/* Man-hours per day */}
       <section className="space-y-2">
