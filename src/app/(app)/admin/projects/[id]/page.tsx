@@ -6,10 +6,13 @@ import { ScopeManager, type ScopeAssetData, type CatalogOption } from '@/compone
 import { BudgetPanel } from '@/components/admin/BudgetPanel'
 import { VariancePanel } from '@/components/admin/VariancePanel'
 import { CostBudgetPanel } from '@/components/admin/CostBudgetPanel'
+import { ActualCostPanel } from '@/components/admin/ActualCostPanel'
+import { ExpensesManager } from '@/components/admin/ExpensesManager'
 import { serializeScopeActivity, scopeActivitySelect } from '@/lib/scope'
 import { loadProjectBudget } from '@/lib/budget.server'
 import { loadBudgetVsActual } from '@/lib/actuals.server'
 import { loadProjectMoney } from '@/lib/money.server'
+import { loadProjectCostPerformance } from '@/lib/cost.server'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,7 +27,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
   })
   if (!project) notFound()
 
-  const [assets, catalog, budget, variance, money] = await Promise.all([
+  const [assets, catalog, budget, variance, money, costPerf] = await Promise.all([
     prisma.asset.findMany({
       where: { projectId: project.id },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
@@ -41,6 +44,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
     loadProjectBudget(project.id),
     loadBudgetVsActual(project.id),
     loadProjectMoney(project.id),
+    loadProjectCostPerformance(project.id),
   ])
 
   const serialized: ScopeAssetData[] = assets.map((a) => ({
@@ -72,6 +76,13 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
       />
 
       {money && <CostBudgetPanel money={money} />}
+      {costPerf && <ActualCostPanel cost={costPerf} projectId={project.id} />}
+      {costPerf && (
+        <ExpensesManager
+          projectId={project.id}
+          initial={[...costPerf.expenses.eligible, ...costPerf.expenses.excluded].sort((a, b) => b.expenseDate.localeCompare(a.expenseDate))}
+        />
+      )}
       {variance && <VariancePanel data={variance} />}
       {budget && <BudgetPanel budget={budget} />}
     </div>

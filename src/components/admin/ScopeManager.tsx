@@ -91,15 +91,19 @@ export function ScopeManager({
 
   /**
    * Re-price: re-snapshot current global cost rates onto this activity's frozen budget
-   * rows. This MOVES the budget baseline (and therefore variance/CPI), so warn clearly.
+   * rows. Since Phase 6B, actual cost is separately frozen at approval time — so this moves
+   * ONLY the budget side of the comparison, which is exactly why it must be spelled out.
    */
   async function reprice(act: ScopeActivityData) {
     const priced = act.pricedAt ? new Date(act.pricedAt).toLocaleDateString() : 'never'
     const ok = confirm(
       `Re-price "${act.name}"?\n\n` +
-        `Its cost rates were last frozen: ${priced}.\n\n` +
-        `This updates the budget to today's catalog rates and CHANGES THE BUDGET BASELINE — ` +
-        `cost variance and CPI for this activity will move. Every rate change is recorded in the audit log.`,
+        `Its budget cost rates were last frozen: ${priced}.\n\n` +
+        `This re-prices the BUDGET at today's catalog rates. Actual cost is NOT affected — ` +
+        `it stays frozen at the rates in force when each report was approved.\n\n` +
+        `So this shifts the budget baseline only: cost variance and CPI for this activity will ` +
+        `move even though nothing about the work already done has changed. ` +
+        `Every old→new rate is recorded in the audit log.`,
     )
     if (!ok) return
     setBusy(true)

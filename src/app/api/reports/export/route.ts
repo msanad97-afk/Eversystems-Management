@@ -28,7 +28,11 @@ const HEADER = [
   'Report Code', 'Date', 'Project Code', 'Project', 'Author', 'Status',
   'Asset', 'Activity', 'Sub-Activity', 'Unit', 'Line Type',
   'Qty Done', 'Cumulative Qty', 'Cumulative %', '% Complete', 'Earned BHD',
-  'Item', 'Headcount', 'Hours', 'Man-Hours', 'Material Qty', 'Notes',
+  'Item', 'Headcount', 'Hours', 'Man-Hours', 'Material Qty',
+  // Phase 6B: actual cost. "Cost Basis" distinguishes a measured approval-time cost from a
+  // backfilled APPROXIMATION so the two are never confused downstream.
+  'Cost Rate BHD', 'Cost BHD', 'Cost Basis',
+  'Notes',
 ]
 
 export async function GET(req: NextRequest) {
@@ -50,7 +54,7 @@ export async function GET(req: NextRequest) {
     where,
     orderBy: [{ reportDate: 'desc' }, { createdAt: 'desc' }],
     select: {
-      id: true, reportCode: true, reportDate: true, status: true,
+      id: true, reportCode: true, reportDate: true, status: true, costBackfilledAt: true,
       project: { select: { projectCode: true, name: true } },
       author: { select: { firstName: true, lastName: true } },
       activities: {
@@ -62,8 +66,8 @@ export async function GET(req: NextRequest) {
             select: {
               subActivityId: true, quantityDone: true, percentComplete: true, note: true,
               subActivity: { select: { name: true, isImplicit: true, type: true, lumpsumBhd: true } },
-              manpower: { select: { headcount: true, hours: true, notes: true, category: { select: { name: true } } } },
-              materials: { select: { quantity: true, notes: true, material: { select: { name: true, unit: true } } } },
+              manpower: { select: { headcount: true, hours: true, notes: true, rateAtApproval: true, costAtApproval: true, category: { select: { name: true } } } },
+              materials: { select: { quantity: true, notes: true, rateAtApproval: true, costAtApproval: true, material: { select: { name: true, unit: true } } } },
             },
           },
         },
@@ -95,9 +99,11 @@ export async function GET(req: NextRequest) {
       r.reportCode, r.reportDate.toISOString().slice(0, 10), r.project.projectCode, r.project.name,
       `${r.author.firstName} ${r.author.lastName}`, r.status,
     ]
+    // Any cost on a backfilled report is an estimate, not a measured approval-time cost.
+    const costBasis = (cost: unknown) => (cost == null ? '' : r.costBackfilledAt ? 'APPROX (backfilled)' : 'MEASURED')
     const subCount = r.activities.reduce((n, a) => n + a.subActivities.length, 0)
     if (subCount === 0) {
-      rows.push([...base, '', '', '', '', 'REPORT', '', '', '', '', '', '', '', '', '', '', ''].map(cell).join(','))
+      rows.push([...base, '', '', '', '', 'REPORT', '', '', '', '', '', '', '', '', '', '', '', '', ''].map(cell).join(','))
       continue
     }
     for (const a of r.activities) {
@@ -112,15 +118,22 @@ export async function GET(req: NextRequest) {
         const lumpBhd = isLumpsum && s.percentComplete != null && s.subActivity.lumpsumBhd != null ? round3((Number(s.percentComplete) / 100) * Number(s.subActivity.lumpsumBhd)) : ''
         rows.push(
           [...base, asset, a.activity.name, subName, a.activity.unit ?? '', isLumpsum ? 'LUMPSUM' : 'MEASURED',
-            isLumpsum ? '' : Number(s.quantityDone ?? 0), cum ?? '', pct, lumpPct, lumpBhd, '', '', '', '', '', s.note ?? ''].map(cell).join(','),
+            isLumpsum ? '' : Number(s.quantityDone ?? 0), cum ?? '', pct, lumpPct, lumpBhd, '', '', '', '', '',
+            '', '', '', s.note ?? ''].map(cell).join(','),
         )
         for (const m of s.manpower) {
           rows.push([...base, asset, a.activity.name, subName, a.activity.unit ?? '', 'MANPOWER',
-            '', '', '', '', '', m.category.name, m.headcount, Number(m.hours), m.headcount * Number(m.hours), '', m.notes ?? ''].map(cell).join(','))
+            '', '', '', '', '', m.category.name, m.headcount, Number(m.hours), m.headcount * Number(m.hours), '',
+            m.rateAtApproval == null ? '' : Number(m.rateAtApproval),
+            m.costAtApproval == null ? '' : Number(m.costAtApproval),
+            costBasis(m.costAtApproval), m.notes ?? ''].map(cell).join(','))
         }
         for (const m of s.materials) {
           rows.push([...base, asset, a.activity.name, subName, a.activity.unit ?? '', 'MATERIAL',
-            '', '', '', '', '', `${m.material.name} (${m.material.unit})`, '', '', '', Number(m.quantity), m.notes ?? ''].map(cell).join(','))
+            '', '', '', '', '', `${m.material.name} (${m.material.unit})`, '', '', '', Number(m.quantity),
+            m.rateAtApproval == null ? '' : Number(m.rateAtApproval),
+            m.costAtApproval == null ? '' : Number(m.costAtApproval),
+            costBasis(m.costAtApproval), m.notes ?? ''].map(cell).join(','))
         }
       }
     }

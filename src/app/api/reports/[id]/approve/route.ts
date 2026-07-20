@@ -5,6 +5,7 @@ import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
 import { canReview } from '@/lib/reports/rules'
 import { notifyReportReviewed } from '@/lib/notifications'
+import { snapshotReportCosts } from '@/lib/reports/costSnapshot'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdmin()
@@ -23,14 +24,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     )
   }
 
-  await prisma.dailyReport.update({
-    where: { id: report.id },
-    data: {
-      status: 'APPROVED',
-      reviewedById: guard.user.id,
-      reviewedAt: new Date(),
-      reviewNote: null,
-    },
+  // Approval is the write-once point for the Actual-Cost snapshot: lock the status and
+  // cost every entry at the live rate in the SAME transaction, so an approved report can
+  // never exist without its costs having been attempted.
+  const costs = await prisma.$transaction(async (tx) => {
+    await tx.dailyReport.update({
+      where: { id: report.id },
+      data: {
+        status: 'APPROVED',
+        reviewedById: guard.user.id,
+        reviewedAt: new Date(),
+        reviewNote: null,
+      },
+    })
+    return snapshotReportCosts(tx, report.id)
   })
 
   writeAuditLog({
@@ -40,6 +47,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     entity: 'DailyReport',
     entityId: report.id,
     entityCode: report.reportCode,
+    metadata: {
+      costSnapshot: costs.totalCost,
+      unpricedManpower: costs.unpricedManpower,
+      unpricedMaterial: costs.unpricedMaterial,
+    },
     ipAddress: getClientIp(req),
   })
 

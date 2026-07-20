@@ -75,6 +75,10 @@ enum AuditAction {
   CATALOG_ACTIVITY_DELETED
   ACTIVITY_PLACED_FROM_CATALOG
   ACTIVITY_REPRICED
+  EXPENSE_CREATED
+  EXPENSE_UPDATED
+  EXPENSE_DELETED
+  REPORT_COST_BACKFILLED
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -244,20 +248,24 @@ model CatalogMaterialRate {
 // ─── DAILY REPORTS ──────────────────────────────────────────────────────────
 
 model DailyReport {
-  id           String       @id @default(cuid())
-  reportCode   String       @unique // DR-2026-0001 — global, immutable
-  projectId    String
-  authorId     String
-  reportDate   DateTime     @db.Date
-  status       ReportStatus @default(DRAFT)
-  weather      String?
-  generalNotes String?
-  submittedAt  DateTime?
-  reviewedById String?
-  reviewedAt   DateTime?
-  reviewNote   String?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id               String       @id @default(cuid())
+  reportCode       String       @unique // DR-2026-0001 — global, immutable
+  projectId        String
+  authorId         String
+  reportDate       DateTime     @db.Date
+  status           ReportStatus @default(DRAFT)
+  weather          String?
+  generalNotes     String?
+  submittedAt      DateTime?
+  reviewedById     String?
+  reviewedAt       DateTime?
+  reviewNote       String?
+  // Phase 6B: set when this report's entry costs were filled in AFTER approval by the admin
+  // backfill action (priced at then-current rates, not at approval time). Any actual cost
+  // derived from such a report is an APPROXIMATION and must be labelled as one everywhere.
+  costBackfilledAt DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
   project    Project @relation(fields: [projectId], references: [id])
   author     User    @relation("ReportAuthor", fields: [authorId], references: [id])

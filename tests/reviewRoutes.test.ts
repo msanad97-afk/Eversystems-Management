@@ -14,6 +14,10 @@ vi.mock('@/lib/prisma', () => ({
     subActivity: { findMany: vi.fn().mockResolvedValue([]) },
     reportActivity: { groupBy: vi.fn().mockResolvedValue([]) },
     reportSubActivity: { groupBy: vi.fn().mockResolvedValue([]), findMany: vi.fn().mockResolvedValue([]) },
+    // Phase 6B: approval now snapshots entry costs inside a transaction.
+    manpowerEntry: { update: vi.fn().mockResolvedValue({}) },
+    materialEntry: { update: vi.fn().mockResolvedValue({}) },
+    $transaction: vi.fn(),
   },
 }))
 
@@ -37,7 +41,9 @@ function actAs(role: Role, id = USER_ID) {
 function reportIs(over: Record<string, unknown>) {
   vi.mocked(prisma.dailyReport.findUnique).mockResolvedValue({
     id: 'r1', reportCode: 'DR-2026-0001', projectId: 'p1', authorId: USER_ID,
-    status: 'SUBMITTED' as ReportStatus, ...over,
+    status: 'SUBMITTED' as ReportStatus,
+    activities: [], // the cost snapshotter reads this; individual tests override it
+    ...over,
   } as never)
 }
 const req = (body?: unknown) =>
@@ -53,6 +59,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(prisma.dailyReport.update).mockResolvedValue({} as never)
   vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never)
+  // Run transaction callbacks against the same mocked client.
+  vi.mocked(prisma.$transaction).mockImplementation(((fn: (tx: typeof prisma) => unknown) => fn(prisma)) as never)
 })
 
 describe('approve route', () => {
