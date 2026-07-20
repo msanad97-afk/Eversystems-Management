@@ -54,7 +54,7 @@ export function canReview(status: ReportStatus): boolean {
   return status === 'SUBMITTED'
 }
 
-// ─── Report content (activity-structured) ─────────────────────────────────────
+// ─── Report content (sub-activity-structured, Phase C2) ────────────────────────
 
 export interface ManpowerInput {
   categoryId: string
@@ -65,77 +65,94 @@ export interface MaterialInput {
   materialId: string
   quantity: number
 }
-export interface ActivityInput {
-  activityId: string
-  activityName?: string
+/**
+ * One reportable line = one sub-activity (implicit when the activity has no named ones).
+ * MEASURED lines carry quantityDone (increment, capped); LUMPSUM lines carry
+ * percentComplete (cumulative 0–100, may not regress below the last approved %).
+ */
+export interface SubActivityInput {
+  subActivityId: string
+  label?: string
+  type: 'MEASURED' | 'LUMPSUM'
   unit?: string
+  // measured
   quantityDone: number
-  /** BOQ cap remaining for this activity = boqQuantity − committedToDate(excluding this report). */
+  /** cap remaining = boqQuantity − committedToDate(excluding this report). */
   remaining: number
+  // lumpsum
+  percentComplete: number
+  lastApprovedPercent: number
   manpower: ManpowerInput[]
   materials: MaterialInput[]
 }
 
-// ─── BOQ cap ───────────────────────────────────────────────────────────────
+// ─── Caps & bounds ─────────────────────────────────────────────────────────
 
-/** Remaining allowance for an activity: boq − committed (never below 0). */
+/** Remaining allowance for a measured sub-activity: boq − committed (never below 0). */
 export function capRemaining(boqQuantity: number, committedExcludingCurrent: number): number {
   return Math.max(0, boqQuantity - committedExcludingCurrent)
 }
 
-/** Returns an error if an activity's quantityDone exceeds its remaining cap (or is negative). */
-export function capErrorFor(a: ActivityInput): string | null {
-  if (!Number.isFinite(a.quantityDone) || a.quantityDone < 0) {
-    return `Quantity for ${a.activityName ? `"${a.activityName}"` : 'an activity'} must be zero or more.`
+/** Validation error for one line (measured cap / lumpsum bounds), or null. */
+export function subActivityError(s: SubActivityInput): string | null {
+  const label = s.label ? `"${s.label}"` : 'a line'
+  if (s.type === 'LUMPSUM') {
+    if (!Number.isFinite(s.percentComplete) || s.percentComplete < 0 || s.percentComplete > 100) {
+      return `Percent complete for ${label} must be between 0 and 100.`
+    }
+    if (s.percentComplete < s.lastApprovedPercent - EPS) {
+      return `Percent complete for ${label} can't drop below the last approved ${s.lastApprovedPercent}%.`
+    }
+    return null
   }
-  if (a.quantityDone > a.remaining + EPS) {
-    const label = a.activityName ? `"${a.activityName}"` : 'this activity'
-    const unit = a.unit ? ` ${a.unit}` : ''
-    return `Quantity for ${label} exceeds the remaining ${a.remaining}${unit}. Reduce the quantity to stay within the BOQ.`
+  if (!Number.isFinite(s.quantityDone) || s.quantityDone < 0) {
+    return `Quantity for ${label} must be zero or more.`
+  }
+  if (s.quantityDone > s.remaining + EPS) {
+    const unit = s.unit ? ` ${s.unit}` : ''
+    return `Quantity for ${label} exceeds the remaining ${s.remaining}${unit}. Reduce it to stay within the BOQ.`
   }
   return null
 }
 
-/** First cap violation across activities, or null. Enforced on BOTH draft save and submit. */
-export function validateCaps(activities: ActivityInput[]): string | null {
-  for (const a of activities) {
-    const e = capErrorFor(a)
+/** First line violation across all lines, or null. Enforced on BOTH draft save and submit. */
+export function validateSubActivities(subs: SubActivityInput[]): string | null {
+  for (const s of subs) {
+    const e = subActivityError(s)
     if (e) return e
   }
   return null
 }
 
+/** Whether a line records real progress today (measured qty > 0, or lumpsum % > 0). */
+export function hasProgress(s: Pick<SubActivityInput, 'type' | 'quantityDone' | 'percentComplete'>): boolean {
+  return s.type === 'LUMPSUM' ? Number(s.percentComplete) > 0 : Number(s.quantityDone) > 0
+}
+
 // ─── Submit validation ────────────────────────────────────────────────────────
 
 /**
- * Validation applied when SUBMITTING (replaces the old "≥1 work item"):
- *   - ≥1 activity with quantityDone > 0;
+ * Applied when SUBMITTING:
+ *   - ≥1 line with progress (a quantity, or a % complete);
  *   - every manpower row: headcount ≥ 1 and hours > 0;
  *   - every material row: quantity > 0;
- *   - every activity within its remaining cap.
- * Manpower and materials remain optional per activity.
+ *   - every line within its cap / lumpsum bounds.
+ * Manpower and materials remain optional per line.
  */
-export function validateForSubmit(activities: ActivityInput[]): string | null {
-  const worked = activities.filter((a) => Number.isFinite(a.quantityDone) && a.quantityDone > 0)
-  if (worked.length === 0) {
-    return 'Add at least one activity with a quantity greater than 0 before submitting.'
+export function validateForSubmit(subs: SubActivityInput[]): string | null {
+  if (!subs.some(hasProgress)) {
+    return 'Add at least one line with progress (a quantity or a % complete) before submitting.'
   }
-  for (const a of activities) {
-    for (const m of a.manpower) {
-      if (!Number.isFinite(m.headcount) || m.headcount < 1) {
-        return 'Every manpower row needs a headcount of at least 1.'
-      }
-      if (!Number.isFinite(m.hours) || m.hours <= 0) {
-        return 'Every manpower row needs hours greater than 0.'
-      }
+  for (const s of subs) {
+    for (const m of s.manpower) {
+      if (!Number.isFinite(m.headcount) || m.headcount < 1) return 'Every manpower row needs a headcount of at least 1.'
+      if (!Number.isFinite(m.hours) || m.hours <= 0) return 'Every manpower row needs hours greater than 0.'
     }
-    for (const m of a.materials) {
-      if (!Number.isFinite(m.quantity) || m.quantity <= 0) {
-        return 'Every material row needs a quantity greater than 0.'
-      }
+    for (const m of s.materials) {
+      if (!Number.isFinite(m.quantity) || m.quantity <= 0) return 'Every material row needs a quantity greater than 0.'
     }
   }
-  return validateCaps(activities)
+  return validateSubActivities(subs)
 }
 
 // ─── Cumulative % ──────────────────────────────────────────────────────────

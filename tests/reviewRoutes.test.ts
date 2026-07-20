@@ -11,7 +11,9 @@ vi.mock('@/lib/prisma', () => ({
     dailyReport: { findUnique: vi.fn(), update: vi.fn().mockResolvedValue({}) },
     projectMember: { findMany: vi.fn().mockResolvedValue([]) },
     activity: { findMany: vi.fn().mockResolvedValue([]) },
+    subActivity: { findMany: vi.fn().mockResolvedValue([]) },
     reportActivity: { groupBy: vi.fn().mockResolvedValue([]) },
+    reportSubActivity: { groupBy: vi.fn().mockResolvedValue([]), findMany: vi.fn().mockResolvedValue([]) },
   },
 }))
 
@@ -113,17 +115,22 @@ describe('submit route — resubmit clears the prior review', () => {
       reviewNote: 'previous note',
       activities: [
         {
-          activityId: 'act1',
-          quantityDone: 5,
-          activity: { name: 'Blockwork 200mm', unit: 'm2' },
-          manpower: [{ categoryId: 'c1', headcount: 5, hours: 8 }],
-          materials: [],
+          subActivities: [
+            {
+              subActivityId: 'sub1',
+              quantityDone: 5,
+              percentComplete: null,
+              subActivity: { name: 'Blockwork 200mm', type: 'MEASURED', activity: { unit: 'm2' } },
+              manpower: [{ categoryId: 'c1', headcount: 5, hours: 8 }],
+              materials: [],
+            },
+          ],
         },
       ],
     })
-    // Cap: activity boq 500, no committed elsewhere → remaining 500 (qty 5 is fine).
-    vi.mocked(prisma.activity.findMany).mockResolvedValue([{ id: 'act1', boqQuantity: 500 }] as never)
-    vi.mocked(prisma.reportActivity.groupBy).mockResolvedValue([] as never)
+    // Cap: sub boq 500, no committed elsewhere → remaining 500 (qty 5 is fine).
+    vi.mocked(prisma.subActivity.findMany).mockResolvedValue([{ id: 'sub1', type: 'MEASURED', activity: { boqQuantity: 500 } }] as never)
+    vi.mocked(prisma.reportSubActivity.groupBy).mockResolvedValue([] as never)
 
     const res = await submit(req(), params)
     expect(res.status).toBe(200)

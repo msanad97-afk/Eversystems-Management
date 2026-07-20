@@ -20,7 +20,7 @@ function summarize(r: {
   reportDate: Date
   status: ReportListItem['status']
   project: { id: string; projectCode: string; name: string }
-  activities: { manpower: { headcount: number; hours: unknown }[]; materials: { id: string }[] }[]
+  activities: { subActivities: { manpower: { headcount: number; hours: unknown }[]; materials: { id: string }[] }[] }[]
 }): ReportListItem {
   return {
     id: r.id,

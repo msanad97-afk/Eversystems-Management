@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 import { hashPassword } from '../src/lib/auth/password'
 import { nextCode } from '../src/lib/idgen'
+import { implicitSubActivityCreate } from '../src/lib/catalog/implicitSub'
 
 const prisma = new PrismaClient()
 
@@ -189,6 +190,8 @@ async function main() {
                 unit: act.unit,
                 boqQuantity: act.boq,
                 sortOrder: i,
+                // Bare measured demo lines report through a single implicit sub-activity (C2).
+                subActivities: { create: [implicitSubActivityCreate('MEASURED', null)] },
               })),
             },
           },

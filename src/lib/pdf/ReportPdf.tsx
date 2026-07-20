@@ -3,16 +3,24 @@ import { Document, Page, View, Text, StyleSheet, Svg, Rect, Path } from '@react-
 
 export interface PdfManpower { categoryName: string; headcount: number; hours: number }
 export interface PdfMaterial { materialName: string; unit: string; quantity: number }
+export interface PdfSub {
+  name: string
+  isImplicit: boolean
+  type: 'MEASURED' | 'LUMPSUM'
+  unit: string
+  quantityDone: number | null
+  percentComplete: number | null
+  cumulativePercent: number
+  earnedBhd: number | null
+  note: string | null
+  manpower: PdfManpower[]
+  materials: PdfMaterial[]
+}
 export interface PdfActivity {
   assetName: string
   activityName: string
   ref: string | null
-  unit: string
-  quantityDone: number
-  cumulativePercent: number
-  note: string | null
-  manpower: PdfManpower[]
-  materials: PdfMaterial[]
+  subs: PdfSub[]
 }
 export interface ReportPdfData {
   reportCode: string
@@ -112,33 +120,42 @@ export function ReportPdf({ data }: { data: ReportPdfData }) {
               <Text style={styles.assetTitle}>{g.assetName}</Text>
               {g.activities.map((a, ai) => (
                 <View key={ai} style={styles.activityBox}>
-                  <View style={styles.activityHead}>
-                    <Text style={styles.activityName}>{a.ref ? `${a.ref} · ` : ''}{a.activityName}</Text>
-                    <Text>{a.quantityDone} {a.unit} · {round1(a.cumulativePercent)}% complete</Text>
-                  </View>
-                  {a.note ? <Text style={styles.muted}>{a.note}</Text> : null}
-                  {a.manpower.length > 0 && (
-                    <>
-                      <Text style={styles.subLabel}>Manpower</Text>
-                      {a.manpower.map((m, mi) => (
-                        <View key={mi} style={styles.row}>
-                          <Text style={{ flex: 1 }}>{m.categoryName}</Text>
-                          <Text style={{ width: 140, textAlign: 'right' }}>{m.headcount} × {m.hours}h = {m.headcount * m.hours} man-hrs</Text>
-                        </View>
-                      ))}
-                    </>
-                  )}
-                  {a.materials.length > 0 && (
-                    <>
-                      <Text style={styles.subLabel}>Materials</Text>
-                      {a.materials.map((m, mi) => (
-                        <View key={mi} style={styles.row}>
-                          <Text style={{ flex: 1 }}>{m.materialName}</Text>
-                          <Text style={{ width: 100, textAlign: 'right' }}>{m.quantity} {m.unit}</Text>
-                        </View>
-                      ))}
-                    </>
-                  )}
+                  <Text style={styles.activityName}>{a.ref ? `${a.ref} · ` : ''}{a.activityName}</Text>
+                  {a.subs.map((s, si) => (
+                    <View key={si} style={{ marginTop: 3, paddingLeft: s.isImplicit ? 0 : 6 }}>
+                      <View style={styles.activityHead}>
+                        <Text style={s.isImplicit ? styles.muted : { fontWeight: 600 }}>{s.isImplicit ? 'Progress' : s.name}</Text>
+                        <Text>
+                          {s.type === 'LUMPSUM'
+                            ? `${round1(s.percentComplete ?? 0)}% complete${s.earnedBhd != null ? ` · earned BHD ${s.earnedBhd}` : ''}`
+                            : `${s.quantityDone ?? 0} ${s.unit} · ${round1(s.cumulativePercent)}% complete`}
+                        </Text>
+                      </View>
+                      {s.note ? <Text style={styles.muted}>{s.note}</Text> : null}
+                      {s.manpower.length > 0 && (
+                        <>
+                          <Text style={styles.subLabel}>Manpower</Text>
+                          {s.manpower.map((m, mi) => (
+                            <View key={mi} style={styles.row}>
+                              <Text style={{ flex: 1 }}>{m.categoryName}</Text>
+                              <Text style={{ width: 140, textAlign: 'right' }}>{m.headcount} × {m.hours}h = {round1(m.headcount * m.hours)} man-hrs</Text>
+                            </View>
+                          ))}
+                        </>
+                      )}
+                      {s.materials.length > 0 && (
+                        <>
+                          <Text style={styles.subLabel}>Materials</Text>
+                          {s.materials.map((m, mi) => (
+                            <View key={mi} style={styles.row}>
+                              <Text style={{ flex: 1 }}>{m.materialName}</Text>
+                              <Text style={{ width: 100, textAlign: 'right' }}>{m.quantity} {m.unit}</Text>
+                            </View>
+                          ))}
+                        </>
+                      )}
+                    </View>
+                  ))}
                 </View>
               ))}
             </View>

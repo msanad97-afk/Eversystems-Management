@@ -5,6 +5,7 @@ import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
 import { isNonEmptyString } from '@/lib/validation'
 import { snapshotCatalogActivity } from '@/lib/catalog/snapshot'
+import { implicitSubActivityCreate } from '@/lib/catalog/implicitSub'
 import { scopeActivitySelect, serializeScopeActivity } from '@/lib/scope'
 
 function parsePositive(v: unknown): number | null {
@@ -94,7 +95,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const activity = await prisma.activity.create({
-    data: { assetId: asset.id, name, ref, sortOrder: count, ...data },
+    data: {
+      assetId: asset.id, name, ref, sortOrder: count, ...data,
+      // One-off lines have no named sub-activities → carry a single implicit sub.
+      subActivities: { create: [implicitSubActivityCreate(data.type, data.lumpsumBhd)] },
+    },
     select: scopeActivitySelect,
   })
 

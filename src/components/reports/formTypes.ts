@@ -10,13 +10,22 @@ export interface MatRow {
   materialId: string
   quantity: string
 }
-export interface ActivityRow {
+
+/** One reportable line = one sub-activity (implicit ones render at the activity level). */
+export interface SubRow {
   key: string
-  activityId: string
-  quantityDone: string
+  subActivityId: string
+  included: boolean
+  quantityDone: string // measured
+  percentComplete: string // lumpsum
   note: string
   manpower: ManRow[]
   materials: MatRow[]
+}
+export interface ActivityRow {
+  key: string
+  activityId: string
+  subs: SubRow[]
 }
 
 export interface CategoryOption {
@@ -31,17 +40,28 @@ export interface MaterialOption {
   isActive: boolean
 }
 
-// Project scope for the report form: assets → activities with BOQ/earned/committed/remaining
-// (remaining already excludes the report being edited).
-export interface ActivityOption {
+// Scope for the report form: assets → activities → sub-activities with cap/budget/floor.
+export interface SubActivityOption {
   id: string
-  ref: string | null
   name: string
-  unit: string
+  type: 'MEASURED' | 'LUMPSUM'
+  isImplicit: boolean
   boqQuantity: number
   earned: number
   committed: number
   remaining: number
+  lumpsumBhd: number | null
+  lastApprovedPercent: number
+  budgetManpower: { categoryId: string; categoryName: string; hoursPerUnit: number }[]
+  budgetMaterials: { materialId: string; materialName: string; unit: string; qtyPerUnit: number }[]
+}
+export interface ActivityOption {
+  id: string
+  ref: string | null
+  name: string
+  type: 'MEASURED' | 'LUMPSUM'
+  unit: string
+  subActivities: SubActivityOption[]
 }
 export interface AssetOption {
   id: string

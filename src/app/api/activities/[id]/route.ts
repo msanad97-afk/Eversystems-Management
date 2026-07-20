@@ -42,10 +42,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     data.lumpsumBhd = lump
   }
 
-  const updated = await prisma.activity.update({
-    where: { id: activity.id },
-    data,
-    select: { id: true, ref: true, name: true, unit: true, boqQuantity: true, lumpsumBhd: true, isActive: true, sortOrder: true },
+  const updated = await prisma.$transaction(async (tx) => {
+    const u = await tx.activity.update({
+      where: { id: activity.id },
+      data,
+      select: { id: true, ref: true, name: true, unit: true, boqQuantity: true, lumpsumBhd: true, isActive: true, sortOrder: true },
+    })
+    // Keep the implicit lumpsum sub-activity's frozen amount in sync (it is the source of
+    // truth for budget/earned derivation, C2).
+    if (data.lumpsumBhd !== undefined) {
+      await tx.subActivity.updateMany({
+        where: { activityId: activity.id, isImplicit: true, type: 'LUMPSUM' },
+        data: { lumpsumBhd: data.lumpsumBhd as number },
+      })
+    }
+    return u
   })
 
   writeAuditLog({

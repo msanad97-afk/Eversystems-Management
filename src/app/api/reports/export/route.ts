@@ -21,13 +21,13 @@ function cell(v: string | number | null | undefined): string {
   const s = String(v)
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
-function round1(n: number): number {
-  return Math.round(n * 10) / 10
-}
+const round1 = (n: number) => Math.round(n * 10) / 10
+const round3 = (n: number) => Math.round(n * 1000) / 1000
 
 const HEADER = [
   'Report Code', 'Date', 'Project Code', 'Project', 'Author', 'Status',
-  'Asset', 'Activity', 'Unit', 'Line Type', 'Qty Done', 'Cumulative Qty', 'Cumulative %',
+  'Asset', 'Activity', 'Sub-Activity', 'Unit', 'Line Type',
+  'Qty Done', 'Cumulative Qty', 'Cumulative %', '% Complete', 'Earned BHD',
   'Item', 'Headcount', 'Hours', 'Man-Hours', 'Material Qty', 'Notes',
 ]
 
@@ -50,36 +50,41 @@ export async function GET(req: NextRequest) {
     where,
     orderBy: [{ reportDate: 'desc' }, { createdAt: 'desc' }],
     select: {
-      id: true, reportCode: true, reportDate: true, status: true, weather: true,
+      id: true, reportCode: true, reportDate: true, status: true,
       project: { select: { projectCode: true, name: true } },
       author: { select: { firstName: true, lastName: true } },
       activities: {
         orderBy: { sortOrder: 'asc' },
         select: {
-          activityId: true, quantityDone: true, note: true,
           activity: { select: { name: true, unit: true, boqQuantity: true, asset: { select: { name: true } } } },
-          manpower: { select: { headcount: true, hours: true, notes: true, category: { select: { name: true } } } },
-          materials: { select: { quantity: true, notes: true, material: { select: { name: true, unit: true } } } },
+          subActivities: {
+            orderBy: { sortOrder: 'asc' },
+            select: {
+              subActivityId: true, quantityDone: true, percentComplete: true, note: true,
+              subActivity: { select: { name: true, isImplicit: true, type: true, lumpsumBhd: true } },
+              manpower: { select: { headcount: true, hours: true, notes: true, category: { select: { name: true } } } },
+              materials: { select: { quantity: true, notes: true, material: { select: { name: true, unit: true } } } },
+            },
+          },
         },
       },
     },
   })
 
-  // Committed (SUBMITTED+APPROVED) running cumulative per (report, activity), for the
-  // Cumulative Qty/% on ACTIVITY lines. Non-committed lines (draft/rejected) leave it blank.
-  const activityIds = [...new Set(reports.flatMap((r) => r.activities.map((a) => a.activityId)))]
+  // Committed (SUBMITTED+APPROVED) running cumulative per (report, sub-activity), measured only.
+  const subIds = [...new Set(reports.flatMap((r) => r.activities.flatMap((a) => a.subActivities.map((s) => s.subActivityId))))]
   const cumByKey = new Map<string, number>()
-  if (activityIds.length > 0) {
-    const committed = await prisma.reportActivity.findMany({
-      where: { activityId: { in: activityIds }, report: { status: { in: ['SUBMITTED', 'APPROVED'] } } },
-      orderBy: [{ report: { reportDate: 'asc' } }, { report: { createdAt: 'asc' } }],
-      select: { activityId: true, quantityDone: true, reportId: true },
+  if (subIds.length > 0) {
+    const committed = await prisma.reportSubActivity.findMany({
+      where: { subActivityId: { in: subIds }, quantityDone: { not: null }, reportActivity: { report: { status: { in: ['SUBMITTED', 'APPROVED'] } } } },
+      orderBy: [{ reportActivity: { report: { reportDate: 'asc' } } }, { reportActivity: { report: { createdAt: 'asc' } } }],
+      select: { subActivityId: true, quantityDone: true, reportActivity: { select: { reportId: true } } },
     })
     const running = new Map<string, number>()
-    for (const ra of committed) {
-      const r = (running.get(ra.activityId) ?? 0) + Number(ra.quantityDone)
-      running.set(ra.activityId, r)
-      cumByKey.set(`${ra.reportId}|${ra.activityId}`, r)
+    for (const rs of committed) {
+      const r = (running.get(rs.subActivityId) ?? 0) + Number(rs.quantityDone)
+      running.set(rs.subActivityId, r)
+      cumByKey.set(`${rs.reportActivity.reportId}|${rs.subActivityId}`, r)
     }
   }
 
@@ -87,37 +92,36 @@ export async function GET(req: NextRequest) {
 
   for (const r of reports) {
     const base = [
-      r.reportCode,
-      r.reportDate.toISOString().slice(0, 10),
-      r.project.projectCode,
-      r.project.name,
-      `${r.author.firstName} ${r.author.lastName}`,
-      r.status,
+      r.reportCode, r.reportDate.toISOString().slice(0, 10), r.project.projectCode, r.project.name,
+      `${r.author.firstName} ${r.author.lastName}`, r.status,
     ]
-    if (r.activities.length === 0) {
-      rows.push([...base, '', '', '', 'REPORT', '', '', '', '', '', '', '', '', ''].map(cell).join(','))
+    const subCount = r.activities.reduce((n, a) => n + a.subActivities.length, 0)
+    if (subCount === 0) {
+      rows.push([...base, '', '', '', '', 'REPORT', '', '', '', '', '', '', '', '', '', '', ''].map(cell).join(','))
       continue
     }
     for (const a of r.activities) {
+      const asset = a.activity.asset.name
       const boq = Number(a.activity.boqQuantity)
-      const cum = cumByKey.get(`${r.id}|${a.activityId}`)
-      const pct = cum !== undefined ? round1(cumulativePercent(cum, boq)) : ''
-      // ACTIVITY line
-      rows.push(
-        [...base, a.activity.asset.name, a.activity.name, a.activity.unit, 'ACTIVITY',
-          Number(a.quantityDone), cum ?? '', pct, '', '', '', '', '', a.note ?? ''].map(cell).join(','),
-      )
-      for (const m of a.manpower) {
+      for (const s of a.subActivities) {
+        const subName = s.subActivity.isImplicit ? '' : s.subActivity.name
+        const isLumpsum = s.subActivity.type === 'LUMPSUM'
+        const cum = cumByKey.get(`${r.id}|${s.subActivityId}`)
+        const pct = !isLumpsum && cum !== undefined ? round1(cumulativePercent(cum, boq)) : ''
+        const lumpPct = isLumpsum && s.percentComplete != null ? Number(s.percentComplete) : ''
+        const lumpBhd = isLumpsum && s.percentComplete != null && s.subActivity.lumpsumBhd != null ? round3((Number(s.percentComplete) / 100) * Number(s.subActivity.lumpsumBhd)) : ''
         rows.push(
-          [...base, a.activity.asset.name, a.activity.name, a.activity.unit, 'MANPOWER',
-            '', '', '', m.category.name, m.headcount, Number(m.hours), m.headcount * Number(m.hours), '', m.notes ?? ''].map(cell).join(','),
+          [...base, asset, a.activity.name, subName, a.activity.unit ?? '', isLumpsum ? 'LUMPSUM' : 'MEASURED',
+            isLumpsum ? '' : Number(s.quantityDone ?? 0), cum ?? '', pct, lumpPct, lumpBhd, '', '', '', '', '', s.note ?? ''].map(cell).join(','),
         )
-      }
-      for (const m of a.materials) {
-        rows.push(
-          [...base, a.activity.asset.name, a.activity.name, a.activity.unit, 'MATERIAL',
-            '', '', '', `${m.material.name} (${m.material.unit})`, '', '', '', Number(m.quantity), m.notes ?? ''].map(cell).join(','),
-        )
+        for (const m of s.manpower) {
+          rows.push([...base, asset, a.activity.name, subName, a.activity.unit ?? '', 'MANPOWER',
+            '', '', '', '', '', m.category.name, m.headcount, Number(m.hours), m.headcount * Number(m.hours), '', m.notes ?? ''].map(cell).join(','))
+        }
+        for (const m of s.materials) {
+          rows.push([...base, asset, a.activity.name, subName, a.activity.unit ?? '', 'MATERIAL',
+            '', '', '', '', '', `${m.material.name} (${m.material.unit})`, '', '', '', Number(m.quantity), m.notes ?? ''].map(cell).join(','))
+        }
       }
     }
   }
@@ -126,9 +130,6 @@ export async function GET(req: NextRequest) {
   const filename = `reports-export-${new Date().toISOString().slice(0, 10)}.csv`
   return new Response(csv, {
     status: 200,
-    headers: {
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-    },
+    headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"` },
   })
 }

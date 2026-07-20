@@ -341,6 +341,7 @@ model SubActivity {
   activity       Activity                    @relation(fields: [activityId], references: [id], onDelete: Cascade)
   manpowerBudget SubActivityManpowerBudget[]
   materialBudget SubActivityMaterialBudget[]
+  progress       ReportSubActivity[]
 
   @@unique([activityId, name])
   @@index([activityId])
@@ -370,56 +371,76 @@ model SubActivityMaterialBudget {
   @@unique([subActivityId, materialId])
 }
 
+// Phase C2: ReportActivity is a lightweight GROUP (the activity touched on a report); the
+// actual progress + manpower/materials live one level down, on ReportSubActivity. Every
+// reportable line is a sub-activity (implicit when the activity has no named ones), so
+// reporting runs one code path and entries never hang off two levels.
 model ReportActivity {
-  id           String  @id @default(cuid())
-  reportId     String
-  activityId   String
-  quantityDone Decimal @db.Decimal(14, 3) // INCREMENT reported on this report's date
-  note         String? // optional; replaces the free-text WorkItem
-  sortOrder    Int     @default(0)
+  id         String  @id @default(cuid())
+  reportId   String
+  activityId String
+  note       String? // optional activity-level note
+  sortOrder  Int     @default(0)
 
-  report    DailyReport     @relation(fields: [reportId], references: [id], onDelete: Cascade)
-  activity  Activity        @relation(fields: [activityId], references: [id])
-  manpower  ManpowerEntry[]
-  materials MaterialEntry[]
+  report        DailyReport         @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  activity      Activity            @relation(fields: [activityId], references: [id])
+  subActivities ReportSubActivity[]
 
   @@unique([reportId, activityId]) // an activity appears at most once per report
   @@index([activityId])
 }
 
-model ManpowerEntry {
-  id               String  @id @default(cuid())
+model ReportSubActivity {
+  id               String   @id @default(cuid())
   reportActivityId String
-  categoryId       String
-  headcount        Int
-  hours            Decimal @db.Decimal(5, 2)
-  notes            String?
+  subActivityId    String
+  quantityDone     Decimal? @db.Decimal(14, 3) // MEASURED: increment reported on this date
+  percentComplete  Decimal? @db.Decimal(6, 3) // LUMPSUM: cumulative % complete (0–100)
+  note             String?
+  sortOrder        Int      @default(0)
+
+  reportActivity ReportActivity  @relation(fields: [reportActivityId], references: [id], onDelete: Cascade)
+  subActivity    SubActivity     @relation(fields: [subActivityId], references: [id])
+  manpower       ManpowerEntry[]
+  materials      MaterialEntry[]
+
+  @@unique([reportActivityId, subActivityId]) // a sub-activity appears at most once per activity
+  @@index([subActivityId])
+}
+
+model ManpowerEntry {
+  id                  String  @id @default(cuid())
+  reportSubActivityId String
+  categoryId          String
+  headcount           Int
+  hours               Decimal @db.Decimal(5, 2)
+  notes               String?
 
   // Phase 6: cost snapshot, populated once on report approval.
   rateAtApproval Decimal? @db.Decimal(12, 3)
   costAtApproval Decimal? @db.Decimal(14, 3)
 
-  reportActivity ReportActivity @relation(fields: [reportActivityId], references: [id], onDelete: Cascade)
-  category       LaborCategory  @relation(fields: [categoryId], references: [id])
+  reportSubActivity ReportSubActivity @relation(fields: [reportSubActivityId], references: [id], onDelete: Cascade)
+  category          LaborCategory     @relation(fields: [categoryId], references: [id])
 
-  @@unique([reportActivityId, categoryId])
+  @@unique([reportSubActivityId, categoryId])
 }
 
 model MaterialEntry {
-  id               String  @id @default(cuid())
-  reportActivityId String
-  materialId       String
-  quantity         Decimal @db.Decimal(12, 3)
-  notes            String?
+  id                  String  @id @default(cuid())
+  reportSubActivityId String
+  materialId          String
+  quantity            Decimal @db.Decimal(12, 3)
+  notes               String?
 
   // Phase 6: cost snapshot, populated once on report approval.
   rateAtApproval Decimal? @db.Decimal(12, 3)
   costAtApproval Decimal? @db.Decimal(14, 3)
 
-  reportActivity ReportActivity @relation(fields: [reportActivityId], references: [id], onDelete: Cascade)
-  material       Material       @relation(fields: [materialId], references: [id])
+  reportSubActivity ReportSubActivity @relation(fields: [reportSubActivityId], references: [id], onDelete: Cascade)
+  material          Material          @relation(fields: [materialId], references: [id])
 
-  @@unique([reportActivityId, materialId])
+  @@unique([reportSubActivityId, materialId])
 }
 
 // ─── REPORT NUMBERING (no Redis) ─────────────────────────────────────────────

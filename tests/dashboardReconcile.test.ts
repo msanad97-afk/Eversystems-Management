@@ -26,8 +26,10 @@ beforeAll(async () => {
   const project = await prisma.project.create({ data: { projectCode: `TSTD-P-${sfx}`, name: `Recon ${sfx}`, status: 'ACTIVE', createdBy: user.id } })
   ids.projectId = project.id
   const asset = await prisma.asset.create({ data: { projectId: project.id, name: 'Tower A' } })
-  const act1 = await prisma.activity.create({ data: { assetId: asset.id, name: 'Blockwork', unit: 'm2', boqQuantity: 100 } })
-  const act2 = await prisma.activity.create({ data: { assetId: asset.id, name: 'Concrete', unit: 'm3', boqQuantity: 50 } })
+  const implicit = { create: [{ name: '__implicit__', type: 'MEASURED' as const, isImplicit: true }] }
+  const act1 = await prisma.activity.create({ data: { assetId: asset.id, name: 'Blockwork', unit: 'm2', boqQuantity: 100, subActivities: implicit }, include: { subActivities: true } })
+  const act2 = await prisma.activity.create({ data: { assetId: asset.id, name: 'Concrete', unit: 'm3', boqQuantity: 50, subActivities: implicit }, include: { subActivities: true } })
+  const subOf = new Map([[act1.id, act1.subActivities[0]!.id], [act2.id, act2.subActivities[0]!.id]])
 
   const mk = (code: string, date: string, status: 'APPROVED' | 'SUBMITTED' | 'DRAFT', acts: { activityId: string; qty: number; manpower?: { categoryId: string; headcount: number; hours: number }[]; materials?: { materialId: string; quantity: number }[] }[]) =>
     prisma.dailyReport.create({
@@ -36,9 +38,14 @@ beforeAll(async () => {
         activities: {
           create: acts.map((a) => ({
             activityId: a.activityId,
-            quantityDone: a.qty,
-            manpower: { create: a.manpower ?? [] },
-            materials: { create: a.materials ?? [] },
+            subActivities: {
+              create: [{
+                subActivityId: subOf.get(a.activityId)!,
+                quantityDone: a.qty,
+                manpower: { create: a.manpower ?? [] },
+                materials: { create: a.materials ?? [] },
+              }],
+            },
           })),
         },
       },

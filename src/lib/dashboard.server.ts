@@ -31,20 +31,23 @@ type Row = {
   reportDate: Date
   status: DashReport['status']
   activities: {
-    manpower: { headcount: number; hours: unknown; category: { name: string } }[]
-    materials: { quantity: unknown; material: { name: string; unit: string } }[]
+    subActivities: {
+      manpower: { headcount: number; hours: unknown; category: { name: string } }[]
+      materials: { quantity: unknown; material: { name: string; unit: string } }[]
+    }[]
   }[]
 }
 function toDashReport(r: Row): DashReport {
+  const subs = r.activities.flatMap((a) => a.subActivities)
   return {
     projectId: r.projectId,
     reportDate: r.reportDate.toISOString().slice(0, 10),
     status: r.status,
-    manpower: r.activities.flatMap((a) =>
-      a.manpower.map((m) => ({ categoryName: m.category.name, headcount: m.headcount, hours: Number(m.hours) })),
+    manpower: subs.flatMap((s) =>
+      s.manpower.map((m) => ({ categoryName: m.category.name, headcount: m.headcount, hours: Number(m.hours) })),
     ),
-    materials: r.activities.flatMap((a) =>
-      a.materials.map((m) => ({ materialName: m.material.name, unit: m.material.unit, quantity: Number(m.quantity) })),
+    materials: subs.flatMap((s) =>
+      s.materials.map((m) => ({ materialName: m.material.name, unit: m.material.unit, quantity: Number(m.quantity) })),
     ),
   }
 }
@@ -55,8 +58,12 @@ const reportSelect = {
   status: true,
   activities: {
     select: {
-      manpower: { select: { headcount: true, hours: true, category: { select: { name: true } } } },
-      materials: { select: { quantity: true, material: { select: { name: true, unit: true } } } },
+      subActivities: {
+        select: {
+          manpower: { select: { headcount: true, hours: true, category: { select: { name: true } } } },
+          materials: { select: { quantity: true, material: { select: { name: true, unit: true } } } },
+        },
+      },
     },
   },
 } as const
@@ -116,40 +123,60 @@ export async function loadDashboard(input: {
 
   // ─── Physical progress: active assets→activities for the scoped active projects,
   // earned = APPROVED-only quantityDone as of the range end date (`to`). ───
-  // Only MEASURED activities have a physical % (LUMPSUM tracks BHD earned value, Phase C2),
-  // so lumpsum lines are excluded from the physical-progress aggregate.
+  // Only MEASURED activities have a physical % (LUMPSUM tracks BHD earned value), so lumpsum
+  // lines are excluded. An activity's % is the mean of its measured sub-activities' %s; we
+  // feed aggregateProgress a physical-earned-equivalent (mean% × BOQ) so its percent and
+  // remaining come out right against the real BOQ.
   const assetsForProgress = await prisma.asset.findMany({
     where: { projectId: { in: activeProjects.map((p) => p.id) }, isActive: true, activities: { some: { isActive: true, type: 'MEASURED' } } },
     orderBy: [{ projectId: 'asc' }, { sortOrder: 'asc' }],
     select: {
       id: true, name: true, projectId: true,
-      activities: { where: { isActive: true, type: 'MEASURED' }, orderBy: { sortOrder: 'asc' }, select: { id: true, ref: true, name: true, unit: true, boqQuantity: true } },
+      activities: {
+        where: { isActive: true, type: 'MEASURED' },
+        orderBy: { sortOrder: 'asc' },
+        select: {
+          id: true, ref: true, name: true, unit: true, boqQuantity: true,
+          subActivities: { where: { isActive: true, type: 'MEASURED' }, select: { id: true } },
+        },
+      },
     },
   })
-  const progActivityIds = assetsForProgress.flatMap((a) => a.activities.map((x) => x.id))
-  const earnedRows = progActivityIds.length
-    ? await prisma.reportActivity.groupBy({
-        by: ['activityId'],
-        where: { activityId: { in: progActivityIds }, report: { status: 'APPROVED', reportDate: { lte: civilMidnightUtc(to) } } },
+  const progSubIds = assetsForProgress.flatMap((a) => a.activities.flatMap((x) => x.subActivities.map((s) => s.id)))
+  const earnedRows = progSubIds.length
+    ? await prisma.reportSubActivity.groupBy({
+        by: ['subActivityId'],
+        where: {
+          subActivityId: { in: progSubIds },
+          quantityDone: { not: null },
+          reportActivity: { report: { status: 'APPROVED', reportDate: { lte: civilMidnightUtc(to) } } },
+        },
         _sum: { quantityDone: true },
       })
     : []
-  const earnedMap = new Map(earnedRows.map((r) => [r.activityId, Number(r._sum.quantityDone ?? 0)]))
+  const earnedBySub = new Map(earnedRows.map((r) => [r.subActivityId, Number(r._sum.quantityDone ?? 0)]))
   const projMeta = new Map(activeProjects.map((p) => [p.id, p]))
   const progressRows: ProgressRow[] = assetsForProgress.flatMap((asset) =>
-    asset.activities.map((act) => ({
-      projectId: asset.projectId,
-      projectCode: projMeta.get(asset.projectId)?.projectCode ?? '',
-      projectName: projMeta.get(asset.projectId)?.name ?? '',
-      assetId: asset.id,
-      assetName: asset.name,
-      activityId: act.id,
-      ref: act.ref,
-      name: act.name,
-      unit: act.unit ?? '',
-      boqQuantity: Number(act.boqQuantity),
-      earned: earnedMap.get(act.id) ?? 0,
-    })),
+    asset.activities
+      .filter((act) => act.subActivities.length > 0)
+      .map((act) => {
+        const boq = Number(act.boqQuantity)
+        const perSubPct = act.subActivities.map((s) => (boq > 0 ? Math.min(100, ((earnedBySub.get(s.id) ?? 0) / boq) * 100) : 0))
+        const meanPct = perSubPct.reduce((a, b) => a + b, 0) / perSubPct.length
+        return {
+          projectId: asset.projectId,
+          projectCode: projMeta.get(asset.projectId)?.projectCode ?? '',
+          projectName: projMeta.get(asset.projectId)?.name ?? '',
+          assetId: asset.id,
+          assetName: asset.name,
+          activityId: act.id,
+          ref: act.ref,
+          name: act.name,
+          unit: act.unit ?? '',
+          boqQuantity: boq,
+          earned: (meanPct / 100) * boq, // physical-earned-equivalent → percent == mean of subs' %
+        }
+      }),
   )
   const progress = aggregateProgress(progressRows).sort((a, b) => a.projectCode.localeCompare(b.projectCode))
 

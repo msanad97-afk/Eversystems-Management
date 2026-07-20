@@ -5,8 +5,8 @@ import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
 import { getReportScope } from '@/lib/reports/access'
 import { canReadReport, canAuthorReport } from '@/lib/reports/query'
-import { canEdit, validateCaps, WEATHER_OPTIONS, type ActivityInput } from '@/lib/reports/rules'
-import { remainingByActivity } from '@/lib/reports/progress'
+import { canEdit, validateSubActivities, WEATHER_OPTIONS, type SubActivityInput } from '@/lib/reports/rules'
+import { remainingBySubActivity, lumpsumFloorBySubActivity } from '@/lib/reports/progress'
 
 function num(v: unknown): number {
   const n = Number(v)
@@ -21,9 +21,15 @@ const reportInclude = {
   activities: {
     orderBy: { sortOrder: 'asc' as const },
     include: {
-      activity: { select: { name: true, ref: true, unit: true, isActive: true, asset: { select: { name: true } } } },
-      manpower: { include: { category: { select: { name: true, isActive: true } } } },
-      materials: { include: { material: { select: { name: true, unit: true, isActive: true } } } },
+      activity: { select: { name: true, ref: true, unit: true, asset: { select: { name: true } } } },
+      subActivities: {
+        orderBy: { sortOrder: 'asc' as const },
+        include: {
+          subActivity: { select: { name: true, isImplicit: true, type: true } },
+          manpower: { include: { category: { select: { name: true } } } },
+          materials: { include: { material: { select: { name: true, unit: true } } } },
+        },
+      },
     },
   },
 }
@@ -38,8 +44,6 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const scope = await getReportScope(guard.user.id, guard.user.role)
   if (!canReadReport(scope, report)) return NextResponse.json({ error: 'Forbidden.' }, { status: 403 })
 
-  const editable = canAuthorReport(scope, report) && canEdit(report.status)
-
   return NextResponse.json({
     report: {
       id: report.id,
@@ -48,38 +52,31 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       status: report.status,
       weather: report.weather,
       generalNotes: report.generalNotes,
-      submittedAt: report.submittedAt ? report.submittedAt.toISOString() : null,
-      reviewedAt: report.reviewedAt ? report.reviewedAt.toISOString() : null,
-      reviewNote: report.reviewNote,
-      project: report.project,
-      author: { id: report.author.id, name: `${report.author.firstName} ${report.author.lastName}` },
-      editable,
+      editable: canAuthorReport(scope, report) && canEdit(report.status),
       activities: report.activities.map((ra) => ({
-        id: ra.id,
         activityId: ra.activityId,
-        assetName: ra.activity.asset.name,
-        activityRef: ra.activity.ref,
         activityName: ra.activity.name,
-        unit: ra.activity.unit,
-        activityActive: ra.activity.isActive,
-        quantityDone: Number(ra.quantityDone),
-        note: ra.note,
-        manpower: ra.manpower.map((m) => ({
-          id: m.id, categoryId: m.categoryId, categoryName: m.category.name,
-          categoryActive: m.category.isActive, headcount: m.headcount, hours: Number(m.hours), notes: m.notes,
-        })),
-        materials: ra.materials.map((m) => ({
-          id: m.id, materialId: m.materialId, materialName: m.material.name, unit: m.material.unit,
-          materialActive: m.material.isActive, quantity: Number(m.quantity), notes: m.notes,
+        assetName: ra.activity.asset.name,
+        subActivities: ra.subActivities.map((rs) => ({
+          subActivityId: rs.subActivityId,
+          name: rs.subActivity.name,
+          type: rs.subActivity.type,
+          isImplicit: rs.subActivity.isImplicit,
+          quantityDone: rs.quantityDone == null ? null : Number(rs.quantityDone),
+          percentComplete: rs.percentComplete == null ? null : Number(rs.percentComplete),
+          note: rs.note,
+          manpower: rs.manpower.map((m) => ({ categoryId: m.categoryId, categoryName: m.category.name, headcount: m.headcount, hours: Number(m.hours) })),
+          materials: rs.materials.map((m) => ({ materialId: m.materialId, materialName: m.material.name, unit: m.material.unit, quantity: Number(m.quantity) })),
         })),
       })),
     },
   })
 }
 
-interface ParsedActivity {
-  activityId: string
+interface ParsedSub {
+  subActivityId: string
   quantityDone: number
+  percentComplete: number
   note: string | null
   manpower: { categoryId: string; headcount: number; hours: number; notes: string | null }[]
   materials: { materialId: string; quantity: number; notes: string | null }[]
@@ -96,32 +93,27 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!report) return NextResponse.json({ error: 'Report not found.' }, { status: 404 })
 
   const scope = await getReportScope(guard.user.id, guard.user.role)
-  if (!canAuthorReport(scope, report)) {
-    return NextResponse.json({ error: 'You can only edit your own reports.' }, { status: 403 })
-  }
-  if (!canEdit(report.status)) {
-    return NextResponse.json({ error: 'This report can no longer be edited.' }, { status: 403 })
-  }
+  if (!canAuthorReport(scope, report)) return NextResponse.json({ error: 'You can only edit your own reports.' }, { status: 403 })
+  if (!canEdit(report.status)) return NextResponse.json({ error: 'This report can no longer be edited.' }, { status: 403 })
 
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 })
 
   const weather =
-    typeof body.weather === 'string' && (WEATHER_OPTIONS as readonly string[]).includes(body.weather)
-      ? body.weather
-      : null
+    typeof body.weather === 'string' && (WEATHER_OPTIONS as readonly string[]).includes(body.weather) ? body.weather : null
   const generalNotes = str(body.generalNotes)
 
-  const rawActivities: unknown[] = Array.isArray(body.activities) ? body.activities : []
-  const parsed: ParsedActivity[] = rawActivities
-    .filter((a): a is Record<string, unknown> => isRecord(a) && typeof a.activityId === 'string')
-    .map((a) => {
-      const rawM: unknown[] = Array.isArray(a.manpower) ? a.manpower : []
-      const rawX: unknown[] = Array.isArray(a.materials) ? a.materials : []
+  const raw: unknown[] = Array.isArray(body.subActivities) ? body.subActivities : []
+  const parsed: ParsedSub[] = raw
+    .filter((s): s is Record<string, unknown> => isRecord(s) && typeof s.subActivityId === 'string')
+    .map((s) => {
+      const rawM: unknown[] = Array.isArray(s.manpower) ? s.manpower : []
+      const rawX: unknown[] = Array.isArray(s.materials) ? s.materials : []
       return {
-        activityId: a.activityId as string,
-        quantityDone: num(a.quantityDone),
-        note: str(a.note),
+        subActivityId: s.subActivityId as string,
+        quantityDone: num(s.quantityDone),
+        percentComplete: num(s.percentComplete),
+        note: str(s.note),
         manpower: rawM
           .filter((m): m is Record<string, unknown> => isRecord(m) && typeof m.categoryId === 'string')
           .map((m) => ({ categoryId: m.categoryId as string, headcount: Math.trunc(num(m.headcount)), hours: num(m.hours), notes: str(m.notes) })),
@@ -131,53 +123,70 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       }
     })
 
-  // One row per activity (schema @@unique([reportId, activityId])).
-  if (new Set(parsed.map((a) => a.activityId)).size !== parsed.length) {
-    return NextResponse.json({ error: 'Each activity can appear only once per report.' }, { status: 400 })
+  if (new Set(parsed.map((s) => s.subActivityId)).size !== parsed.length) {
+    return NextResponse.json({ error: 'Each sub-activity can appear only once per report.' }, { status: 400 })
   }
-  // Per-activity: one manpower row per category, one material row per material.
-  for (const a of parsed) {
-    if (new Set(a.manpower.map((m) => m.categoryId)).size !== a.manpower.length) {
-      return NextResponse.json({ error: 'Each labor category can appear only once per activity.' }, { status: 400 })
+  for (const s of parsed) {
+    if (new Set(s.manpower.map((m) => m.categoryId)).size !== s.manpower.length) {
+      return NextResponse.json({ error: 'Each labour category can appear only once per line.' }, { status: 400 })
     }
-    if (new Set(a.materials.map((m) => m.materialId)).size !== a.materials.length) {
-      return NextResponse.json({ error: 'Each material can appear only once per activity.' }, { status: 400 })
+    if (new Set(s.materials.map((m) => m.materialId)).size !== s.materials.length) {
+      return NextResponse.json({ error: 'Each material can appear only once per line.' }, { status: 400 })
     }
   }
 
-  const activityIds = parsed.map((a) => a.activityId)
-  const categoryIds = [...new Set(parsed.flatMap((a) => a.manpower.map((m) => m.categoryId)))]
-  const materialIds = [...new Set(parsed.flatMap((a) => a.materials.map((m) => m.materialId)))]
+  const subIds = parsed.map((s) => s.subActivityId)
+  const categoryIds = [...new Set(parsed.flatMap((s) => s.manpower.map((m) => m.categoryId)))]
+  const materialIds = [...new Set(parsed.flatMap((s) => s.materials.map((m) => m.materialId)))]
 
-  // Referenced activities must belong to this project; catalog ids must exist.
-  const acts = await prisma.activity.findMany({
-    where: { id: { in: activityIds } },
-    select: { id: true, name: true, unit: true, asset: { select: { projectId: true } } },
+  // Sub-activities must belong to this project (via their activity → asset).
+  const subs = await prisma.subActivity.findMany({
+    where: { id: { in: subIds } },
+    select: { id: true, name: true, type: true, activityId: true, activity: { select: { id: true, unit: true, boqQuantity: true, asset: { select: { projectId: true } } } } },
   })
-  if (acts.length !== activityIds.length || acts.some((a) => a.asset.projectId !== report.projectId)) {
-    return NextResponse.json({ error: 'Unknown activity for this project.' }, { status: 400 })
+  if (subs.length !== subIds.length || subs.some((s) => s.activity.asset.projectId !== report.projectId)) {
+    return NextResponse.json({ error: 'Unknown sub-activity for this project.' }, { status: 400 })
   }
   if (categoryIds.length > 0 && (await prisma.laborCategory.count({ where: { id: { in: categoryIds } } })) !== categoryIds.length) {
-    return NextResponse.json({ error: 'Unknown labor category.' }, { status: 400 })
+    return NextResponse.json({ error: 'Unknown labour category.' }, { status: 400 })
   }
   if (materialIds.length > 0 && (await prisma.material.count({ where: { id: { in: materialIds } } })) !== materialIds.length) {
     return NextResponse.json({ error: 'Unknown material.' }, { status: 400 })
   }
 
-  // BOQ cap — enforced on draft save too (excluding this report).
-  const remaining = await remainingByActivity(activityIds, report.id)
-  const meta = new Map(acts.map((a) => [a.id, a]))
-  const capInputs: ActivityInput[] = parsed.map((a) => ({
-    activityId: a.activityId,
-    activityName: meta.get(a.activityId)?.name,
-    unit: meta.get(a.activityId)?.unit ?? undefined,
-    quantityDone: a.quantityDone,
-    remaining: remaining.get(a.activityId)?.remaining ?? 0,
-    manpower: a.manpower,
-    materials: a.materials,
-  }))
-  const capError = validateCaps(capInputs)
+  // Caps (measured, excluding this report) + lumpsum floors (approved).
+  const lumpsumIds = subs.filter((s) => s.type === 'LUMPSUM').map((s) => s.id)
+  const [remaining, floors] = await Promise.all([
+    remainingBySubActivity(subIds, report.id),
+    lumpsumFloorBySubActivity(lumpsumIds),
+  ])
+  const meta = new Map(subs.map((s) => [s.id, s]))
+  const capInputs: SubActivityInput[] = parsed.map((s) => {
+    const m = meta.get(s.subActivityId)!
+    return {
+      subActivityId: s.subActivityId,
+      label: m.name,
+      type: m.type as 'MEASURED' | 'LUMPSUM',
+      unit: m.activity.unit ?? undefined,
+      quantityDone: s.quantityDone,
+      remaining: remaining.get(s.subActivityId)?.remaining ?? 0,
+      percentComplete: s.percentComplete,
+      lastApprovedPercent: floors.get(s.subActivityId) ?? 0,
+      manpower: s.manpower,
+      materials: s.materials,
+    }
+  })
+  const capError = validateSubActivities(capInputs)
   if (capError) return NextResponse.json({ error: capError }, { status: 400 })
+
+  // Group sub-activities under their parent activity (ReportActivity is the group).
+  const byActivity = new Map<string, ParsedSub[]>()
+  for (const s of parsed) {
+    const actId = meta.get(s.subActivityId)!.activityId
+    const list = byActivity.get(actId) ?? []
+    list.push(s)
+    byActivity.set(actId, list)
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.reportActivity.deleteMany({ where: { reportId: report.id } })
@@ -187,13 +196,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         weather,
         generalNotes,
         activities: {
-          create: parsed.map((a, i) => ({
-            activityId: a.activityId,
-            quantityDone: a.quantityDone,
-            note: a.note,
-            sortOrder: i,
-            manpower: { create: a.manpower },
-            materials: { create: a.materials },
+          create: [...byActivity.entries()].map(([activityId, list], ai) => ({
+            activityId,
+            sortOrder: ai,
+            subActivities: {
+              create: list.map((s, si) => {
+                const isLumpsum = meta.get(s.subActivityId)!.type === 'LUMPSUM'
+                return {
+                  subActivityId: s.subActivityId,
+                  quantityDone: isLumpsum ? null : s.quantityDone,
+                  percentComplete: isLumpsum ? s.percentComplete : null,
+                  note: s.note,
+                  sortOrder: si,
+                  manpower: { create: s.manpower },
+                  materials: { create: s.materials },
+                }
+              }),
+            },
           })),
         },
       },

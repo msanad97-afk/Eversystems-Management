@@ -5,22 +5,31 @@ import { useRouter } from 'next/navigation'
 import type { ReportStatus } from '@prisma/client'
 import { Button } from '@/components/ui/Button'
 import { ReportStatusBadge } from '@/components/reports/ReportStatusBadge'
-import { computeReportTotals } from '@/lib/reports/rules'
+import { computeManpowerTotals } from '@/lib/reports/rules'
 import { useToast } from '@/contexts/ToastContext'
 
 export interface RoManpower { id: string; categoryName: string; headcount: number; hours: number }
 export interface RoMaterial { id: string; materialName: string; unit: string; quantity: number }
+export interface RoSub {
+  id: string
+  name: string
+  isImplicit: boolean
+  type: 'MEASURED' | 'LUMPSUM'
+  unit: string
+  quantityDone: number | null
+  percentComplete: number | null
+  cumulativePercent: number
+  earnedBhd: number | null
+  note: string | null
+  manpower: RoManpower[]
+  materials: RoMaterial[]
+}
 export interface RoActivity {
   id: string
   assetName: string
   activityRef: string | null
   activityName: string
-  unit: string
-  quantityDone: number
-  cumulativePercent: number
-  note: string | null
-  manpower: RoManpower[]
-  materials: RoMaterial[]
+  subs: RoSub[]
 }
 export interface ReportDetail {
   id: string
@@ -40,8 +49,14 @@ function formatDate(iso: string): string {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
   })
 }
-function round1(n: number): number {
-  return Math.round(n * 10) / 10
+const round1 = (n: number) => Math.round(n * 10) / 10
+
+function subLabel(s: RoSub): string {
+  if (s.type === 'LUMPSUM') {
+    const earned = s.earnedBhd != null ? ` · earned BHD ${s.earnedBhd.toLocaleString()}` : ''
+    return `${round1(s.percentComplete ?? 0)}% complete${earned}`
+  }
+  return `${s.quantityDone ?? 0} ${s.unit} · ${round1(s.cumulativePercent)}% complete`
 }
 
 export function ReportReadOnlyView({ report, canRecall }: { report: ReportDetail; canRecall: boolean }) {
@@ -49,9 +64,9 @@ export function ReportReadOnlyView({ report, canRecall }: { report: ReportDetail
   const { showToast } = useToast()
   const [recalling, setRecalling] = useState(false)
 
-  const totals = computeReportTotals(report.activities)
+  const allManpower = report.activities.flatMap((a) => a.subs.flatMap((s) => s.manpower))
+  const totals = computeManpowerTotals(allManpower)
 
-  // Group activities by asset (preserving first-seen order).
   const groups: { assetName: string; activities: RoActivity[] }[] = []
   for (const a of report.activities) {
     let g = groups.find((x) => x.assetName === a.assetName)
@@ -92,16 +107,12 @@ export function ReportReadOnlyView({ report, canRecall }: { report: ReportDetail
           </div>
         )}
         {canRecall && (
-          <div className="mt-3">
-            <Button variant="secondary" onClick={recall} loading={recalling}>Recall to edit</Button>
-          </div>
+          <div className="mt-3"><Button variant="secondary" onClick={recall} loading={recalling}>Recall to edit</Button></div>
         )}
       </div>
 
       {report.activities.length === 0 ? (
-        <div className="rounded-lg border border-border bg-surface p-4 text-sm text-fg-subtle">
-          No activities recorded.
-        </div>
+        <div className="rounded-lg border border-border bg-surface p-4 text-sm text-fg-subtle">No work recorded.</div>
       ) : (
         groups.map((g) => (
           <section key={g.assetName} className="rounded-lg border border-border bg-surface p-4">
@@ -109,36 +120,38 @@ export function ReportReadOnlyView({ report, canRecall }: { report: ReportDetail
             <div className="space-y-3">
               {g.activities.map((a) => (
                 <div key={a.id} className="rounded-md border border-border p-3">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="font-medium text-fg">
-                      {a.activityRef ? `${a.activityRef} · ` : ''}{a.activityName}
-                    </span>
-                    <span className="text-sm text-fg-muted">
-                      {a.quantityDone} {a.unit} · {round1(a.cumulativePercent)}% complete
-                    </span>
+                  <p className="font-medium text-fg">{a.activityRef ? `${a.activityRef} · ` : ''}{a.activityName}</p>
+                  <div className="mt-2 space-y-2">
+                    {a.subs.map((s) => (
+                      <div key={s.id} className={s.isImplicit ? '' : 'rounded border border-border p-2'}>
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          {!s.isImplicit && <span className="text-sm font-medium text-fg">{s.name}</span>}
+                          <span className="text-sm text-fg-muted">{subLabel(s)}</span>
+                        </div>
+                        {s.note && <p className="mt-1 text-sm text-fg-muted">{s.note}</p>}
+                        {s.manpower.length > 0 && (
+                          <ul className="mt-1 space-y-0.5">
+                            {s.manpower.map((m) => (
+                              <li key={m.id} className="flex justify-between text-sm text-fg">
+                                <span>{m.categoryName}</span>
+                                <span className="text-fg-muted">{m.headcount} × {m.hours}h = {round1(m.headcount * m.hours)} man-hrs</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {s.materials.length > 0 && (
+                          <ul className="mt-1 space-y-0.5 border-t border-border pt-1">
+                            {s.materials.map((m) => (
+                              <li key={m.id} className="flex justify-between text-sm text-fg">
+                                <span>{m.materialName}</span>
+                                <span className="text-fg-muted">{m.quantity} {m.unit}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                  {a.note && <p className="mt-1 text-sm text-fg-muted">{a.note}</p>}
-
-                  {a.manpower.length > 0 && (
-                    <ul className="mt-2 space-y-0.5">
-                      {a.manpower.map((m) => (
-                        <li key={m.id} className="flex justify-between text-sm text-fg">
-                          <span>{m.categoryName}</span>
-                          <span className="text-fg-muted">{m.headcount} × {m.hours}h = {m.headcount * m.hours} man-hrs</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {a.materials.length > 0 && (
-                    <ul className="mt-2 space-y-0.5 border-t border-border pt-2">
-                      {a.materials.map((m) => (
-                        <li key={m.id} className="flex justify-between text-sm text-fg">
-                          <span>{m.materialName}</span>
-                          <span className="text-fg-muted">{m.quantity} {m.unit}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
                 </div>
               ))}
             </div>

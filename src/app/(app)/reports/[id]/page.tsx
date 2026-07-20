@@ -4,13 +4,15 @@ import { prisma } from '@/lib/prisma'
 import { getReportScope } from '@/lib/reports/access'
 import { canReadReport, canAuthorReport } from '@/lib/reports/query'
 import { canEdit, cumulativePercent } from '@/lib/reports/rules'
-import { loadFormScope, earnedByActivity } from '@/lib/reports/progress'
+import { loadFormScope, earnedBySubActivity } from '@/lib/reports/progress'
 import { ReportForm } from '@/components/reports/ReportForm'
 import { ReportReadOnlyView } from '@/components/reports/ReportReadOnlyView'
 import { ReviewActions } from '@/components/reports/ReviewActions'
 import type { CategoryOption, MaterialOption } from '@/components/reports/formTypes'
 
 export const dynamic = 'force-dynamic'
+
+const round3 = (n: number) => Math.round(n * 1000) / 1000
 
 export default async function ReportPage({ params }: { params: { id: string } }) {
   const user = await getSessionUser()
@@ -24,9 +26,15 @@ export default async function ReportPage({ params }: { params: { id: string } })
       activities: {
         orderBy: { sortOrder: 'asc' },
         include: {
-          activity: { select: { name: true, ref: true, unit: true, isActive: true, boqQuantity: true, asset: { select: { name: true } } } },
-          manpower: { include: { category: { select: { name: true, isActive: true } } } },
-          materials: { include: { material: { select: { name: true, unit: true, isActive: true } } } },
+          activity: { select: { name: true, ref: true, unit: true, boqQuantity: true, asset: { select: { name: true } } } },
+          subActivities: {
+            orderBy: { sortOrder: 'asc' },
+            include: {
+              subActivity: { select: { name: true, isImplicit: true, type: true, lumpsumBhd: true } },
+              manpower: { include: { category: { select: { name: true, isActive: true } } } },
+              materials: { include: { material: { select: { name: true, unit: true, isActive: true } } } },
+            },
+          },
         },
       },
     },
@@ -38,25 +46,20 @@ export default async function ReportPage({ params }: { params: { id: string } })
 
   const isAuthor = canAuthorReport(scope, report)
   const editable = isAuthor && canEdit(report.status)
-  const activityIds = report.activities.map((ra) => ra.activityId)
+  const reportSubs = report.activities.flatMap((ra) => ra.subActivities)
 
   if (editable) {
     const [formScope, activeCats, activeMats] = await Promise.all([
-      loadFormScope(report.projectId, activityIds, report.id),
+      loadFormScope(report.projectId, report.id),
       prisma.laborCategory.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true, isActive: true } }),
       prisma.material.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true, unit: true, isActive: true } }),
     ])
 
-    // Merge any inactive catalog items already on the report so their rows still render.
     const catMap = new Map<string, CategoryOption>(activeCats.map((c) => [c.id, c]))
     const matMap = new Map<string, MaterialOption>(activeMats.map((m) => [m.id, m]))
-    for (const ra of report.activities) {
-      for (const m of ra.manpower) {
-        if (!catMap.has(m.categoryId)) catMap.set(m.categoryId, { id: m.categoryId, name: m.category.name, isActive: m.category.isActive })
-      }
-      for (const m of ra.materials) {
-        if (!matMap.has(m.materialId)) matMap.set(m.materialId, { id: m.materialId, name: m.material.name, unit: m.material.unit, isActive: m.material.isActive })
-      }
+    for (const rs of reportSubs) {
+      for (const m of rs.manpower) if (!catMap.has(m.categoryId)) catMap.set(m.categoryId, { id: m.categoryId, name: m.category.name, isActive: m.category.isActive })
+      for (const m of rs.materials) if (!matMap.has(m.materialId)) matMap.set(m.materialId, { id: m.materialId, name: m.material.name, unit: m.material.unit, isActive: m.material.isActive })
     }
 
     return (
@@ -70,12 +73,13 @@ export default async function ReportPage({ params }: { params: { id: string } })
           generalNotes: report.generalNotes,
           reviewNote: report.reviewNote,
           project: { name: report.project.name, projectCode: report.project.projectCode },
-          activities: report.activities.map((ra) => ({
-            activityId: ra.activityId,
-            quantityDone: Number(ra.quantityDone),
-            note: ra.note,
-            manpower: ra.manpower.map((m) => ({ categoryId: m.categoryId, headcount: m.headcount, hours: Number(m.hours) })),
-            materials: ra.materials.map((m) => ({ materialId: m.materialId, quantity: Number(m.quantity) })),
+          entries: reportSubs.map((rs) => ({
+            subActivityId: rs.subActivityId,
+            quantityDone: rs.quantityDone == null ? null : Number(rs.quantityDone),
+            percentComplete: rs.percentComplete == null ? null : Number(rs.percentComplete),
+            note: rs.note,
+            manpower: rs.manpower.map((m) => ({ categoryId: m.categoryId, headcount: m.headcount, hours: Number(m.hours) })),
+            materials: rs.materials.map((m) => ({ materialId: m.materialId, quantity: Number(m.quantity) })),
           })),
         }}
         scope={formScope}
@@ -85,17 +89,16 @@ export default async function ReportPage({ params }: { params: { id: string } })
     )
   }
 
-  // Read-only: compute each activity's current earned % for display.
-  const earned = await earnedByActivity(activityIds)
+  // Read-only: measured cumulative % per sub from approved earned; lumpsum earned = % × BHD.
+  const measuredSubIds = reportSubs.filter((rs) => rs.subActivity.type === 'MEASURED').map((rs) => rs.subActivityId)
+  const earned = await earnedBySubActivity(measuredSubIds)
   const canReview = user.role === 'ADMIN' && report.status === 'SUBMITTED'
 
   return (
     <div className="space-y-4">
       {canReview && <ReviewActions reportId={report.id} />}
       <div className="flex justify-end">
-        <a href={`/api/reports/${report.id}/pdf`} target="_blank" rel="noreferrer" className="text-sm font-medium text-primary hover:underline">
-          Download PDF
-        </a>
+        <a href={`/api/reports/${report.id}/pdf`} target="_blank" rel="noreferrer" className="text-sm font-medium text-primary hover:underline">Download PDF</a>
       </div>
       <ReportReadOnlyView
         canRecall={isAuthor && report.status === 'SUBMITTED'}
@@ -114,12 +117,26 @@ export default async function ReportPage({ params }: { params: { id: string } })
             assetName: ra.activity.asset.name,
             activityRef: ra.activity.ref,
             activityName: ra.activity.name,
-            unit: ra.activity.unit ?? '',
-            quantityDone: Number(ra.quantityDone),
-            cumulativePercent: cumulativePercent(earned.get(ra.activityId) ?? 0, Number(ra.activity.boqQuantity)),
-            note: ra.note,
-            manpower: ra.manpower.map((m) => ({ id: m.id, categoryName: m.category.name, headcount: m.headcount, hours: Number(m.hours) })),
-            materials: ra.materials.map((m) => ({ id: m.id, materialName: m.material.name, unit: m.material.unit, quantity: Number(m.quantity) })),
+            subs: ra.subActivities.map((rs) => {
+              const boq = Number(ra.activity.boqQuantity)
+              const isLumpsum = rs.subActivity.type === 'LUMPSUM'
+              const pct = rs.percentComplete == null ? 0 : Number(rs.percentComplete)
+              const lump = rs.subActivity.lumpsumBhd == null ? null : Number(rs.subActivity.lumpsumBhd)
+              return {
+                id: rs.id,
+                name: rs.subActivity.name,
+                isImplicit: rs.subActivity.isImplicit,
+                type: rs.subActivity.type,
+                unit: ra.activity.unit ?? '',
+                quantityDone: rs.quantityDone == null ? null : Number(rs.quantityDone),
+                percentComplete: rs.percentComplete == null ? null : pct,
+                cumulativePercent: isLumpsum ? pct : cumulativePercent(earned.get(rs.subActivityId) ?? 0, boq),
+                earnedBhd: isLumpsum && lump != null ? round3((pct / 100) * lump) : null,
+                note: rs.note,
+                manpower: rs.manpower.map((m) => ({ id: m.id, categoryName: m.category.name, headcount: m.headcount, hours: Number(m.hours) })),
+                materials: rs.materials.map((m) => ({ id: m.id, materialName: m.material.name, unit: m.material.unit, quantity: Number(m.quantity) })),
+              }
+            }),
           })),
         }}
       />

@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
+import { implicitSubActivityCreate } from './implicitSub'
 
 type Tx = Prisma.TransactionClient | PrismaClient
 
@@ -36,6 +37,24 @@ export async function snapshotCatalogActivity(
     ? (opts.lumpsumOverrideBhd ?? (template.lumpsumBhd ? Number(template.lumpsumBhd) : null))
     : null
 
+  const copiedSubs = template.subActivities.map((s) => ({
+    name: s.name,
+    type: s.type,
+    lumpsumBhd: s.lumpsumBhd ? Number(s.lumpsumBhd) : null,
+    sortOrder: s.sortOrder,
+    isImplicit: s.isImplicit,
+    manpowerBudget: {
+      create: s.manpowerRates.map((r) => ({ laborCategoryId: r.laborCategoryId, hoursPerUnit: Number(r.hoursPerUnit) })),
+    },
+    materialBudget: {
+      create: s.materialRates.map((r) => ({ materialId: r.materialId, qtyPerUnit: Number(r.qtyPerUnit) })),
+    },
+  }))
+
+  // Every reportable activity needs at least one sub-activity — add the implicit one when
+  // the template has no named sub-activities (a bare measured line or a pure lumpsum).
+  const subCreate = copiedSubs.length > 0 ? copiedSubs : [implicitSubActivityCreate(template.type, lumpsumBhd)]
+
   const created = await tx.activity.create({
     data: {
       assetId: opts.assetId,
@@ -47,27 +66,7 @@ export async function snapshotCatalogActivity(
       boqQuantity: isLumpsum ? 0 : (opts.boqQuantity ?? 0),
       lumpsumBhd,
       sortOrder: opts.sortOrder,
-      subActivities: {
-        create: template.subActivities.map((s) => ({
-          name: s.name,
-          type: s.type,
-          lumpsumBhd: s.lumpsumBhd ? Number(s.lumpsumBhd) : null,
-          sortOrder: s.sortOrder,
-          isImplicit: s.isImplicit,
-          manpowerBudget: {
-            create: s.manpowerRates.map((r) => ({
-              laborCategoryId: r.laborCategoryId,
-              hoursPerUnit: Number(r.hoursPerUnit),
-            })),
-          },
-          materialBudget: {
-            create: s.materialRates.map((r) => ({
-              materialId: r.materialId,
-              qtyPerUnit: Number(r.qtyPerUnit),
-            })),
-          },
-        })),
-      },
+      subActivities: { create: subCreate },
     },
     select: { id: true },
   })

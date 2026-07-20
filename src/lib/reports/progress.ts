@@ -3,185 +3,204 @@ import { prisma } from '@/lib/prisma'
 import { capRemaining, cumulativePercent } from '@/lib/reports/rules'
 
 /**
- * Activity progress data access (Phase R). Two cumulative figures:
- *   - committed = Σ quantityDone over SUBMITTED + APPROVED report-activities — used for
- *     the BOQ cap (prevents over-reporting while reviews are pending);
- *   - earned    = Σ quantityDone over APPROVED only — the official progress used by
- *     history %, dashboards, and Phase 6–9 EVM.
- * The cap is project-wide per activity across all authors.
+ * Progress data access (Phase C2). Reporting is per SUB-ACTIVITY:
+ *   - MEASURED sub: quantityDone increments toward a cap = the parent activity's BOQ.
+ *       committed = Σ over SUBMITTED+APPROVED (drives the cap); earned = Σ over APPROVED.
+ *   - LUMPSUM sub: percentComplete is cumulative 0–100; earned BHD = latest-approved % × BHD.
+ * All figures are per sub-activity across all authors; drafts are excluded everywhere.
  */
 
 const COMMITTED: ReportStatus[] = ['SUBMITTED', 'APPROVED']
 const EARNED: ReportStatus[] = ['APPROVED']
 
-async function sumByActivity(
-  activityIds: string[],
+/** Σ measured quantityDone per sub-activity over the given report statuses. */
+async function sumBySubActivity(
+  subActivityIds: string[],
   statuses: ReportStatus[],
   excludeReportId?: string,
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>()
-  if (activityIds.length === 0) return out
-  const rows = await prisma.reportActivity.groupBy({
-    by: ['activityId'],
+  if (subActivityIds.length === 0) return out
+  const rows = await prisma.reportSubActivity.groupBy({
+    by: ['subActivityId'],
     where: {
-      activityId: { in: activityIds },
-      report: { status: { in: statuses } },
-      ...(excludeReportId ? { reportId: { not: excludeReportId } } : {}),
+      subActivityId: { in: subActivityIds },
+      quantityDone: { not: null },
+      reportActivity: {
+        report: { status: { in: statuses } },
+        ...(excludeReportId ? { reportId: { not: excludeReportId } } : {}),
+      },
     },
     _sum: { quantityDone: true },
   })
-  for (const r of rows) out.set(r.activityId, Number(r._sum.quantityDone ?? 0))
+  for (const r of rows) out.set(r.subActivityId, Number(r._sum.quantityDone ?? 0))
   return out
 }
 
-export interface ScopeActivity {
-  id: string
-  ref: string | null
-  name: string
-  unit: string
-  boqQuantity: number
-  earned: number
-  committed: number
-  remaining: number
+/** Latest cumulative % per lumpsum sub-activity (most recent report by date) over statuses. */
+async function latestPercentBySubActivity(
+  subActivityIds: string[],
+  statuses: ReportStatus[],
+  excludeReportId?: string,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  if (subActivityIds.length === 0) return out
+  const rows = await prisma.reportSubActivity.findMany({
+    where: {
+      subActivityId: { in: subActivityIds },
+      percentComplete: { not: null },
+      reportActivity: {
+        report: { status: { in: statuses } },
+        ...(excludeReportId ? { reportId: { not: excludeReportId } } : {}),
+      },
+    },
+    orderBy: [{ reportActivity: { report: { reportDate: 'desc' } } }, { id: 'desc' }],
+    select: { subActivityId: true, percentComplete: true },
+  })
+  for (const r of rows) {
+    if (!out.has(r.subActivityId)) out.set(r.subActivityId, Number(r.percentComplete ?? 0))
+  }
+  return out
 }
-export interface ScopeAsset {
+
+// ─── Form scope (assets → activities → sub-activities) ────────────────────────
+
+export interface FormSubActivity {
+  id: string
+  name: string
+  type: 'MEASURED' | 'LUMPSUM'
+  isImplicit: boolean
+  // measured
+  boqQuantity: number // = parent activity BOQ (the per-sub cap)
+  committed: number
+  earned: number
+  remaining: number
+  // lumpsum
+  lumpsumBhd: number | null
+  lastApprovedPercent: number // floor for the % input (no regression)
+  // pre-fill from the snapshotted budget (measured only)
+  budgetManpower: { categoryId: string; categoryName: string; hoursPerUnit: number }[]
+  budgetMaterials: { materialId: string; materialName: string; unit: string; qtyPerUnit: number }[]
+}
+export interface FormActivity {
   id: string
   ref: string | null
   name: string
-  activities: ScopeActivity[]
+  type: 'MEASURED' | 'LUMPSUM'
+  unit: string
+  subActivities: FormSubActivity[]
+}
+export interface FormAsset {
+  id: string
+  ref: string | null
+  name: string
+  activities: FormActivity[]
+}
+
+const scopeSubInclude = {
+  where: { isActive: true },
+  orderBy: { sortOrder: 'asc' as const },
+  include: {
+    manpowerBudget: { include: { category: { select: { id: true, name: true } } } },
+    materialBudget: { include: { material: { select: { id: true, name: true, unit: true } } } },
+  },
 }
 
 /**
- * Loads the project's active assets→activities with per-activity BOQ / earned /
- * committed / remaining, for the report form pick-list (cap computed EXCLUDING the
- * report being edited). Only assets that have at least one active activity are returned.
+ * Scope for the report FORM: active assets → active activities → active sub-activities,
+ * each with cap/earned/remaining (measured) or lumpsum floor, and budget pre-fill lines.
+ * `excludeReportId` removes the report being edited from the committed (cap) figure.
  */
-export async function loadReportableScope(
-  projectId: string,
-  excludeReportId?: string,
-): Promise<ScopeAsset[]> {
-  // Rev 2: only MEASURED activities are reportable through this form (LUMPSUM reporting
-  // arrives in Phase C2), so lumpsum lines never appear in the report pick-list.
+export async function loadFormScope(projectId: string, excludeReportId?: string): Promise<FormAsset[]> {
   const assets = await prisma.asset.findMany({
-    where: { projectId, isActive: true, activities: { some: { isActive: true, type: 'MEASURED' } } },
+    where: { projectId, isActive: true, activities: { some: { isActive: true } } },
     orderBy: { sortOrder: 'asc' },
     select: {
-      id: true,
-      ref: true,
-      name: true,
+      id: true, ref: true, name: true,
       activities: {
-        where: { isActive: true, type: 'MEASURED' },
+        where: { isActive: true, subActivities: { some: { isActive: true } } },
         orderBy: { sortOrder: 'asc' },
-        select: { id: true, ref: true, name: true, unit: true, boqQuantity: true },
+        select: { id: true, ref: true, name: true, type: true, unit: true, boqQuantity: true, subActivities: scopeSubInclude },
       },
     },
   })
 
-  const activityIds = assets.flatMap((a) => a.activities.map((x) => x.id))
-  const [committed, earned] = await Promise.all([
-    sumByActivity(activityIds, COMMITTED, excludeReportId),
-    sumByActivity(activityIds, EARNED),
+  const allSubs = assets.flatMap((a) => a.activities.flatMap((x) => x.subActivities))
+  const measuredIds = allSubs.filter((s) => s.type === 'MEASURED').map((s) => s.id)
+  const lumpsumIds = allSubs.filter((s) => s.type === 'LUMPSUM').map((s) => s.id)
+
+  const [committed, earned, floor] = await Promise.all([
+    sumBySubActivity(measuredIds, COMMITTED, excludeReportId),
+    sumBySubActivity(measuredIds, EARNED),
+    latestPercentBySubActivity(lumpsumIds, EARNED),
   ])
 
   return assets.map((asset) => ({
-    id: asset.id,
-    ref: asset.ref,
-    name: asset.name,
+    id: asset.id, ref: asset.ref, name: asset.name,
     activities: asset.activities.map((act) => {
       const boq = Number(act.boqQuantity)
-      const committedQ = committed.get(act.id) ?? 0
       return {
-        id: act.id,
-        ref: act.ref,
-        name: act.name,
-        unit: act.unit ?? '',
-        boqQuantity: boq,
-        earned: earned.get(act.id) ?? 0,
-        committed: committedQ,
-        remaining: capRemaining(boq, committedQ),
+        id: act.id, ref: act.ref, name: act.name, type: act.type as 'MEASURED' | 'LUMPSUM', unit: act.unit ?? '',
+        subActivities: act.subActivities.map((s) => {
+          const committedQ = committed.get(s.id) ?? 0
+          return {
+            id: s.id, name: s.name, type: s.type as 'MEASURED' | 'LUMPSUM', isImplicit: s.isImplicit,
+            boqQuantity: boq,
+            committed: committedQ,
+            earned: earned.get(s.id) ?? 0,
+            remaining: capRemaining(boq, committedQ),
+            lumpsumBhd: s.lumpsumBhd == null ? null : Number(s.lumpsumBhd),
+            lastApprovedPercent: floor.get(s.id) ?? 0,
+            budgetManpower: s.manpowerBudget.map((b) => ({ categoryId: b.category.id, categoryName: b.category.name, hoursPerUnit: Number(b.hoursPerUnit) })),
+            budgetMaterials: s.materialBudget.map((b) => ({ materialId: b.material.id, materialName: b.material.name, unit: b.material.unit, qtyPerUnit: Number(b.qtyPerUnit) })),
+          }
+        }),
       }
     }),
   }))
 }
 
-/** Per-activity BOQ / committed / remaining for a specific set of activity ids (any active state). */
-export async function remainingByActivity(
-  activityIds: string[],
+/** Per-sub cap (boq/committed/remaining) for a set of sub-activity ids — for save/submit. */
+export async function remainingBySubActivity(
+  subActivityIds: string[],
   excludeReportId?: string,
 ): Promise<Map<string, { boqQuantity: number; committed: number; remaining: number }>> {
   const map = new Map<string, { boqQuantity: number; committed: number; remaining: number }>()
-  if (activityIds.length === 0) return map
-  const [acts, committed] = await Promise.all([
-    prisma.activity.findMany({ where: { id: { in: activityIds } }, select: { id: true, boqQuantity: true } }),
-    sumByActivity(activityIds, COMMITTED, excludeReportId),
+  if (subActivityIds.length === 0) return map
+  const [subs, committed] = await Promise.all([
+    prisma.subActivity.findMany({
+      where: { id: { in: subActivityIds } },
+      select: { id: true, type: true, activity: { select: { boqQuantity: true } } },
+    }),
+    sumBySubActivity(subActivityIds, COMMITTED, excludeReportId),
   ])
-  for (const a of acts) {
-    const boq = Number(a.boqQuantity)
-    const c = committed.get(a.id) ?? 0
-    map.set(a.id, { boqQuantity: boq, committed: c, remaining: capRemaining(boq, c) })
+  for (const s of subs) {
+    const boq = Number(s.activity.boqQuantity)
+    const c = committed.get(s.id) ?? 0
+    map.set(s.id, { boqQuantity: boq, committed: c, remaining: capRemaining(boq, c) })
   }
   return map
 }
 
-/** Earned (APPROVED-only) quantity per activity id — for cumulative-% display on read views. */
-export async function earnedByActivity(activityIds: string[]): Promise<Map<string, number>> {
-  return sumByActivity(activityIds, EARNED)
+/** Latest APPROVED cumulative % per lumpsum sub-activity — the no-regression floor. */
+export async function lumpsumFloorBySubActivity(subActivityIds: string[]): Promise<Map<string, number>> {
+  return latestPercentBySubActivity(subActivityIds, EARNED)
 }
 
-/**
- * Scope for the report FORM: the project's active scope PLUS any activities already on
- * the report that have since been deactivated (so an in-progress draft keeps showing
- * them). Remaining excludes the report being edited.
- */
-export async function loadFormScope(
-  projectId: string,
-  referencedActivityIds: string[],
-  excludeReportId?: string,
-): Promise<ScopeAsset[]> {
-  const scope = await loadReportableScope(projectId, excludeReportId)
-  const present = new Set(scope.flatMap((a) => a.activities.map((x) => x.id)))
-  const missing = referencedActivityIds.filter((id) => !present.has(id))
-  if (missing.length === 0) return scope
-
-  const [acts, remaining, earned] = await Promise.all([
-    prisma.activity.findMany({
-      where: { id: { in: missing } },
-      select: { id: true, ref: true, name: true, unit: true, boqQuantity: true, asset: { select: { id: true, ref: true, name: true } } },
-    }),
-    remainingByActivity(missing, excludeReportId),
-    earnedByActivity(missing),
-  ])
-
-  const byAsset = new Map(scope.map((a) => [a.id, a]))
-  for (const act of acts) {
-    let asset = byAsset.get(act.asset.id)
-    if (!asset) {
-      asset = { id: act.asset.id, ref: act.asset.ref, name: act.asset.name, activities: [] }
-      byAsset.set(asset.id, asset)
-      scope.push(asset)
-    }
-    const r = remaining.get(act.id)
-    asset.activities.push({
-      id: act.id,
-      ref: act.ref,
-      name: act.name,
-      unit: act.unit ?? '',
-      boqQuantity: Number(act.boqQuantity),
-      earned: earned.get(act.id) ?? 0,
-      committed: r?.committed ?? 0,
-      remaining: r?.remaining ?? 0,
-    })
-  }
-  return scope
+/** Earned (APPROVED-only) measured quantity per sub-activity — for read-view cumulative %. */
+export async function earnedBySubActivity(subActivityIds: string[]): Promise<Map<string, number>> {
+  return sumBySubActivity(subActivityIds, EARNED)
 }
 
-/** Whether a project has at least one active activity (mandatory-setup gate). */
+/** Whether a project has at least one active MEASURED activity (mandatory-setup gate). */
 export async function projectHasActiveActivities(projectId: string): Promise<boolean> {
   const count = await prisma.activity.count({
     where: { isActive: true, type: 'MEASURED', asset: { projectId, isActive: true } },
   })
   return count > 0
 }
+
+// ─── Activity ledger (per-activity progress, sourced from its sub-activities) ──
 
 export interface LedgerEntry {
   reportId: string
@@ -190,7 +209,7 @@ export interface LedgerEntry {
   author: string
   status: ReportStatus
   quantityDone: number
-  cumulative: number // running committed cumulative up to and including this entry
+  cumulative: number
 }
 export interface ActivityLedger {
   activity: { id: string; ref: string | null; name: string; unit: string; assetName: string; projectId: string }
@@ -199,75 +218,60 @@ export interface ActivityLedger {
 }
 
 /**
- * Full progress ledger for an activity. Lists SUBMITTED + APPROVED entries in date
- * order with a running committed cumulative; the header shows earned (APPROVED-only)
- * qty, %, and remaining. Returns null if the activity does not exist.
+ * Progress ledger for a MEASURED activity, aggregated across its sub-activities: one row
+ * per report (SUBMITTED+APPROVED) with the report's total quantityDone for this activity
+ * and a running committed cumulative. Header shows earned (APPROVED-only) qty/%/remaining.
  */
 export async function activityLedger(activityId: string): Promise<ActivityLedger | null> {
   const activity = await prisma.activity.findUnique({
     where: { id: activityId },
-    select: {
-      id: true,
-      ref: true,
-      name: true,
-      unit: true,
-      boqQuantity: true,
-      asset: { select: { name: true, projectId: true } },
-    },
+    select: { id: true, ref: true, name: true, unit: true, boqQuantity: true, asset: { select: { name: true, projectId: true } } },
   })
   if (!activity) return null
 
-  const rows = await prisma.reportActivity.findMany({
-    where: { activityId, report: { status: { in: COMMITTED } } },
-    orderBy: [{ report: { reportDate: 'asc' } }, { report: { createdAt: 'asc' } }],
+  const rows = await prisma.reportSubActivity.findMany({
+    where: { subActivity: { activityId }, quantityDone: { not: null }, reportActivity: { report: { status: { in: COMMITTED } } } },
+    orderBy: [{ reportActivity: { report: { reportDate: 'asc' } } }, { reportActivity: { report: { createdAt: 'asc' } } }],
     select: {
       quantityDone: true,
-      report: {
+      reportActivity: {
         select: {
-          id: true,
-          reportCode: true,
-          reportDate: true,
-          status: true,
-          author: { select: { firstName: true, lastName: true } },
+          report: {
+            select: { id: true, reportCode: true, reportDate: true, status: true, author: { select: { firstName: true, lastName: true } } },
+          },
         },
       },
     },
   })
 
+  // Fold sub-activity rows into one entry per report (sum quantityDone for this activity).
+  const byReport = new Map<string, LedgerEntry>()
   let running = 0
   let earned = 0
-  const entries: LedgerEntry[] = rows.map((r) => {
-    const q = Number(r.quantityDone)
+  for (const r of rows) {
+    const rep = r.reportActivity.report
+    const q = Number(r.quantityDone ?? 0)
     running += q
-    if (r.report.status === 'APPROVED') earned += q
-    return {
-      reportId: r.report.id,
-      reportCode: r.report.reportCode,
-      date: r.report.reportDate.toISOString().slice(0, 10),
-      author: `${r.report.author.firstName} ${r.report.author.lastName}`,
-      status: r.report.status,
-      quantityDone: q,
-      cumulative: running,
+    if (rep.status === 'APPROVED') earned += q
+    const existing = byReport.get(rep.id)
+    if (existing) {
+      existing.quantityDone += q
+      existing.cumulative = running
+    } else {
+      byReport.set(rep.id, {
+        reportId: rep.id, reportCode: rep.reportCode, date: rep.reportDate.toISOString().slice(0, 10),
+        author: `${rep.author.firstName} ${rep.author.lastName}`, status: rep.status, quantityDone: q, cumulative: running,
+      })
     }
-  })
+  }
 
   const boq = Number(activity.boqQuantity)
   return {
     activity: {
-      id: activity.id,
-      ref: activity.ref,
-      name: activity.name,
-      unit: activity.unit ?? '',
-      assetName: activity.asset.name,
-      projectId: activity.asset.projectId,
+      id: activity.id, ref: activity.ref, name: activity.name, unit: activity.unit ?? '',
+      assetName: activity.asset.name, projectId: activity.asset.projectId,
     },
-    header: {
-      boqQuantity: boq,
-      earned,
-      committed: running,
-      percent: cumulativePercent(earned, boq),
-      remaining: capRemaining(boq, running),
-    },
-    entries,
+    header: { boqQuantity: boq, earned, committed: running, percent: cumulativePercent(earned, boq), remaining: capRemaining(boq, running) },
+    entries: [...byReport.values()],
   }
 }
