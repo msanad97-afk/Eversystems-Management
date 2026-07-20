@@ -10,13 +10,22 @@ type Tx = Prisma.TransactionClient | PrismaClient
  * deleting the template cannot change this placement's budget. `catalogActivityId` is
  * stored only as provenance (SetNull on delete) and is never read to derive a budget.
  *
- * MEASURED activity: `boqQuantity` (the CAP) is required. LUMPSUM activity: boqQuantity
- * is forced to 0 and `lumpsumOverrideBhd` (or the template default) is frozen on the row.
+ * MEASURED activity: `boqQuantity` (the CAP) is required, and an optional `billRate` (the
+ * contract value per unit) may be captured at placement so the line carries its revenue
+ * immediately. LUMPSUM activity: boqQuantity is forced to 0 and `lumpsumOverrideBhd` (or the
+ * template default) is frozen on the row as a COST — lumpsums never carry contract value.
  */
 export async function snapshotCatalogActivity(
   tx: Tx,
   catalogActivityId: string,
-  opts: { assetId: string; sortOrder: number; boqQuantity?: number; ref?: string | null; lumpsumOverrideBhd?: number | null },
+  opts: {
+    assetId: string
+    sortOrder: number
+    boqQuantity?: number
+    ref?: string | null
+    lumpsumOverrideBhd?: number | null
+    billRate?: number | null
+  },
 ): Promise<{ id: string }> {
   const template = await tx.catalogActivity.findUnique({
     where: { id: catalogActivityId },
@@ -39,13 +48,10 @@ export async function snapshotCatalogActivity(
     ? (opts.lumpsumOverrideBhd ?? (template.lumpsumBhd ? Number(template.lumpsumBhd) : null))
     : null
 
-  const lumpsumBillBhd = isLumpsum && template.lumpsumBillBhd ? Number(template.lumpsumBillBhd) : null
-
   const copiedSubs = template.subActivities.map((s) => ({
     name: s.name,
     type: s.type,
     lumpsumBhd: s.lumpsumBhd ? Number(s.lumpsumBhd) : null,
-    lumpsumBillBhd: s.lumpsumBillBhd ? Number(s.lumpsumBillBhd) : null,
     sortOrder: s.sortOrder,
     isImplicit: s.isImplicit,
     manpowerBudget: {
@@ -66,7 +72,7 @@ export async function snapshotCatalogActivity(
 
   // Every reportable activity needs at least one sub-activity — add the implicit one when
   // the template has no named sub-activities (a bare measured line or a pure lumpsum).
-  const subCreate = copiedSubs.length > 0 ? copiedSubs : [implicitSubActivityCreate(template.type, lumpsumBhd, lumpsumBillBhd)]
+  const subCreate = copiedSubs.length > 0 ? copiedSubs : [implicitSubActivityCreate(template.type, lumpsumBhd)]
 
   const created = await tx.activity.create({
     data: {
@@ -78,7 +84,8 @@ export async function snapshotCatalogActivity(
       unit: isLumpsum ? null : template.unit,
       boqQuantity: isLumpsum ? 0 : (opts.boqQuantity ?? 0),
       lumpsumBhd,
-      lumpsumBillBhd,
+      // Revenue is measured-only, so a bill rate is meaningless on a lumpsum placement.
+      billRate: isLumpsum ? null : (opts.billRate ?? null),
       pricedAt: new Date(), // cost rates frozen as of now
       sortOrder: opts.sortOrder,
       subActivities: { create: subCreate },

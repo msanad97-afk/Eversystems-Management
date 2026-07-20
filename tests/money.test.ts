@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { deriveActivityMoney, deriveProjectMoney, lumpsumBill, type MoneyActivity } from '@/lib/money'
+import { deriveActivityMoney, deriveProjectMoney, type MoneyActivity } from '@/lib/money'
 
 const measured = (over: Partial<MoneyActivity> = {}): MoneyActivity => ({
   id: 'a1', ref: null, name: 'EIFS', type: 'MEASURED', unit: 'm2', boqQuantity: 1000,
-  lumpsumBhd: null, lumpsumBillBhd: null, costRate: null, billRate: null,
+  lumpsumBhd: null, costRate: null, billRate: null,
   subActivities: [{
-    id: 's1', name: 'Base coat', type: 'MEASURED', lumpsumBhd: null, lumpsumBillBhd: null,
+    id: 's1', name: 'Base coat', type: 'MEASURED', lumpsumBhd: null,
     manpower: [{ laborCategoryId: 'mason', laborCategoryName: 'Mason', hoursPerUnit: 0.3, costRateAtPlacement: 2 }],
     materials: [{ materialId: 'cement', materialName: 'Cement', materialUnit: 'bag', qtyPerUnit: 0.5, costRateAtPlacement: 1.5 }],
   }],
@@ -19,31 +19,56 @@ describe('measured cost build-up', () => {
     expect(m.costSource).toBe('BUILD_UP')
   })
   it('uses costRate as a fallback only when there is no build-up', () => {
-    const bare = measured({ subActivities: [{ id: 's', name: '__implicit__', type: 'MEASURED', lumpsumBhd: null, lumpsumBillBhd: null, manpower: [], materials: [] }], costRate: 4 })
+    const bare = measured({ subActivities: [{ id: 's', name: '__implicit__', type: 'MEASURED', lumpsumBhd: null, manpower: [], materials: [] }], costRate: 4 })
     const m = deriveActivityMoney(bare)
     expect(m.costBudget).toBe(4000) // 4 × 1000
     expect(m.costSource).toBe('RATE_FALLBACK')
   })
 })
 
-describe('lumpsum + the single BAC', () => {
-  it('bill defaults to cost when no explicit bill is set', () => {
-    expect(lumpsumBill(2500, null)).toBe(2500)
-    expect(lumpsumBill(2500, 3000)).toBe(3000)
-  })
-  it('merges measured cost and lumpsum cost into one activity budget', () => {
-    const mixed = measured({
-      billRate: 5,
-      subActivities: [
-        ...measured().subActivities,
-        { id: 's2', name: 'Scaffolding', type: 'LUMPSUM', lumpsumBhd: 2500, lumpsumBillBhd: 3000, manpower: [], materials: [] },
-      ],
-    })
+/**
+ * The core correctness rule: a lumpsum is a COST to complete the activity. It raises the cost
+ * budget (BAC) and contributes NOTHING to contract value — billing happens at asset/project
+ * level, never on an activity line.
+ */
+describe('lumpsum is a cost, not revenue', () => {
+  const lumpsumSub = { id: 's2', name: 'Scaffolding', type: 'LUMPSUM' as const, lumpsumBhd: 2500, manpower: [], materials: [] }
+
+  it('raises the cost budget and leaves contract value untouched', () => {
+    const mixed = measured({ billRate: 5, subActivities: [...measured().subActivities, lumpsumSub] })
     const m = deriveActivityMoney(mixed)
-    expect(m.costBudget).toBe(3850) // 1350 measured + 2500 lumpsum
-    expect(m.contractValue).toBe(8000) // billRate 5 × 1000 + 3000 lumpsum bill
-    expect(m.margin).toBe(4150)
+    expect(m.costBudget).toBe(3850) // 1350 measured build-up + 2500 lumpsum COST
+    expect(m.contractValue).toBe(5000) // billRate 5 × 1000 ONLY — the lumpsum adds nothing
+    expect(m.margin).toBe(1150) // 5000 − 3850
     expect(m.costSource).toBe('MIXED')
+  })
+
+  it('gives a pure-lumpsum activity zero contract value and a negative margin', () => {
+    const pure = deriveActivityMoney(measured({
+      type: 'LUMPSUM', unit: null, boqQuantity: 0, lumpsumBhd: 2500, subActivities: [],
+    }))
+    expect(pure.costBudget).toBe(2500)
+    expect(pure.contractValue).toBe(0)
+    // Negative margin is the CORRECT reading — real cost, no revenue recorded against it.
+    expect(pure.margin).toBe(-2500)
+    expect(pure.costSource).toBe('LUMPSUM')
+  })
+
+  it('does not treat a lumpsum sub-activity as revenue even with no measured bill rate', () => {
+    const m = deriveActivityMoney(measured({ billRate: null, subActivities: [lumpsumSub] }))
+    expect(m.contractValue).toBe(0)
+    expect(m.costBudget).toBe(2500)
+  })
+
+  it('rolls lumpsum cost into BAC without inflating project contract value', () => {
+    const p = deriveProjectMoney(
+      'p', 'Proj',
+      [{ assetId: 'as1', assetName: 'Villa A', activities: [measured({ billRate: 5, subActivities: [...measured().subActivities, lumpsumSub] })] }],
+      { budgetCost: null, contractValue: null },
+    )
+    expect(p.bac).toBe(3850)
+    expect(p.contractValue).toBe(5000)
+    expect(p.margin).toBe(1150)
   })
 })
 
@@ -51,7 +76,7 @@ describe('unpriced detection', () => {
   it('flags resources with no frozen rate and excludes them from the budget', () => {
     const m = deriveActivityMoney(measured({
       subActivities: [{
-        id: 's1', name: 'Base coat', type: 'MEASURED', lumpsumBhd: null, lumpsumBillBhd: null,
+        id: 's1', name: 'Base coat', type: 'MEASURED', lumpsumBhd: null,
         manpower: [{ laborCategoryId: 'mason', laborCategoryName: 'Mason', hoursPerUnit: 0.3, costRateAtPlacement: null }],
         materials: [{ materialId: 'cement', materialName: 'Cement', materialUnit: 'bag', qtyPerUnit: 0.5, costRateAtPlacement: 1.5 }],
       }],

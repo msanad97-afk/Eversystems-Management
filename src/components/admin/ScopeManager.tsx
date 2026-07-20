@@ -17,7 +17,6 @@ export interface ScopeActivityData {
   unit: string | null
   boqQuantity: number
   lumpsumBhd: number | null
-  lumpsumBillBhd: number | null
   costRate: number | null
   billRate: number | null
   pricedAt: string | null
@@ -115,6 +114,39 @@ export function ScopeManager({
       showToast(data.changes?.length ? `Re-priced — ${data.changes.length} rate(s) changed.` : 'Already at current rates.', 'success')
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Could not re-price.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * Delete an activity. The server decides: unreferenced → hard-deleted; reported against →
+   * deactivated instead, and we say exactly why rather than silently doing something else.
+   */
+  async function removeActivity(act: ScopeActivityData) {
+    const ok = confirm(
+      `Delete "${act.name}"?\n\n` +
+        `If this activity has never been reported against, it is permanently deleted along ` +
+        `with its sub-activities and frozen budget rows. This cannot be undone.\n\n` +
+        `If it HAS been reported against, it is deactivated instead — no approved report ` +
+        `loses the line it was written against.`,
+    )
+    if (!ok) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/activities/${act.id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? 'Could not delete.')
+      router.refresh()
+      if (data.deleted) {
+        showToast(`"${act.name}" deleted.`, 'success')
+      } else {
+        const r = data.references ?? {}
+        const used = (r.reportActivities ?? 0) + (r.reportedSubActivities ?? 0)
+        showToast(`"${act.name}" has been used on ${used} reported line(s), so it was deactivated instead of deleted.`, 'info')
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not delete.', 'error')
     } finally {
       setBusy(false)
     }
@@ -250,6 +282,7 @@ export function ScopeManager({
                         <Button size="sm" variant="ghost" onClick={() => call('PATCH', `/api/activities/${act.id}`, { isActive: !act.isActive })}>
                           {act.isActive ? 'Deactivate' : 'Activate'}
                         </Button>
+                        <Button size="sm" variant="ghost" className="text-danger" onClick={() => removeActivity(act)}>Delete</Button>
                       </div>
                     ))}
                   </div>
@@ -342,13 +375,17 @@ function AddActivity({
   const [unit, setUnit] = useState('')
   const [boq, setBoq] = useState('')
   const [lumpsum, setLumpsum] = useState('')
+  const [billRate, setBillRate] = useState('')
   const [catalogId, setCatalogId] = useState('')
 
   const selectedCatalog = catalogOptions.find((c) => c.id === catalogId) ?? null
 
   function reset() {
-    setName(''); setRef(''); setUnit(''); setBoq(''); setLumpsum(''); setCatalogId('')
+    setName(''); setRef(''); setUnit(''); setBoq(''); setLumpsum(''); setBillRate(''); setCatalogId('')
   }
+
+  // Optional: a blank bill rate places fine and shows up in the unpriced warning until set.
+  const billRateBody = billRate.trim() === '' ? {} : { billRate: Number(billRate) }
 
   const valid =
     mode === 'measured'
@@ -361,14 +398,14 @@ function AddActivity({
     if (!valid) return
     let body: Record<string, unknown>
     if (mode === 'measured') {
-      body = { type: 'MEASURED', name: name.trim(), ref: ref.trim() || null, unit: unit.trim(), boqQuantity: Number(boq) }
+      body = { type: 'MEASURED', name: name.trim(), ref: ref.trim() || null, unit: unit.trim(), boqQuantity: Number(boq), ...billRateBody }
     } else if (mode === 'lumpsum') {
       body = { type: 'LUMPSUM', name: name.trim(), ref: ref.trim() || null, lumpsumBhd: Number(lumpsum) }
     } else {
       body = {
         catalogActivityId: selectedCatalog!.id,
         ref: ref.trim() || null,
-        ...(selectedCatalog!.type === 'MEASURED' ? { boqQuantity: Number(boq) } : {}),
+        ...(selectedCatalog!.type === 'MEASURED' ? { boqQuantity: Number(boq), ...billRateBody } : {}),
         ...(selectedCatalog!.type === 'LUMPSUM' && lumpsum.trim() ? { lumpsumBhd: Number(lumpsum) } : {}),
       }
     }
@@ -412,9 +449,14 @@ function AddActivity({
               </select>
             </div>
             {selectedCatalog?.type === 'MEASURED' && (
-              <div className="w-24">
-                <Input label={`BOQ qty${selectedCatalog.unit ? ` (${selectedCatalog.unit})` : ''}`} type="number" inputMode="decimal" min={0} step="any" value={boq} onChange={(e) => setBoq(e.target.value)} />
-              </div>
+              <>
+                <div className="w-24">
+                  <Input label={`BOQ qty${selectedCatalog.unit ? ` (${selectedCatalog.unit})` : ''}`} type="number" inputMode="decimal" min={0} step="any" value={boq} onChange={(e) => setBoq(e.target.value)} />
+                </div>
+                <div className="w-28">
+                  <Input label="Bill rate" type="number" inputMode="decimal" min={0} step="any" value={billRate} onChange={(e) => setBillRate(e.target.value)} placeholder="BHD/unit" />
+                </div>
+              </>
             )}
             {selectedCatalog?.type === 'LUMPSUM' && (
               <div className="w-32">
@@ -432,6 +474,9 @@ function AddActivity({
                 <div className="w-24"><UnitInput value={unit} onChange={setUnit} unitSuggestions={unitSuggestions} /></div>
                 <div className="w-24">
                   <Input label="BOQ qty" type="number" inputMode="decimal" min={0} step="any" value={boq} onChange={(e) => setBoq(e.target.value)} />
+                </div>
+                <div className="w-28">
+                  <Input label="Bill rate" type="number" inputMode="decimal" min={0} step="any" value={billRate} onChange={(e) => setBillRate(e.target.value)} placeholder="BHD/unit" />
                 </div>
               </>
             ) : (
@@ -471,7 +516,6 @@ function EditActivityForm({ activity, unitSuggestions, busy, onSave, onCancel }:
   const [unit, setUnit] = useState(activity.unit ?? '')
   const [boq, setBoq] = useState(String(activity.boqQuantity))
   const [lumpsum, setLumpsum] = useState(activity.lumpsumBhd != null ? String(activity.lumpsumBhd) : '')
-  const [lumpsumBill, setLumpsumBill] = useState(activity.lumpsumBillBhd != null ? String(activity.lumpsumBillBhd) : '')
   const [costRate, setCostRate] = useState(activity.costRate != null ? String(activity.costRate) : '')
   const [billRate, setBillRate] = useState(activity.billRate != null ? String(activity.billRate) : '')
 
@@ -484,7 +528,7 @@ function EditActivityForm({ activity, unitSuggestions, busy, onSave, onCancel }:
 
   function save() {
     if (activity.type === 'LUMPSUM') {
-      onSave({ name: name.trim(), ref: ref.trim() || null, lumpsumBhd: Number(lumpsum), lumpsumBillBhd: money(lumpsumBill) })
+      onSave({ name: name.trim(), ref: ref.trim() || null, lumpsumBhd: Number(lumpsum) })
     } else {
       onSave({
         name: name.trim(), ref: ref.trim() || null, unit: unit.trim(), boqQuantity: Number(boq),
@@ -498,10 +542,16 @@ function EditActivityForm({ activity, unitSuggestions, busy, onSave, onCancel }:
       <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
       <Input label="Ref (optional)" value={ref} onChange={(e) => setRef(e.target.value)} />
       {activity.type === 'LUMPSUM' ? (
-        <>
-          <Input label="Lumpsum cost (BHD)" type="number" inputMode="decimal" min={0} step="any" value={lumpsum} onChange={(e) => setLumpsum(e.target.value)} />
-          <Input label="Contract value (BHD)" type="number" inputMode="decimal" min={0} step="any" value={lumpsumBill} onChange={(e) => setLumpsumBill(e.target.value)} hint="Leave blank to bill at cost." />
-        </>
+        <Input
+          label="Lumpsum cost (BHD)"
+          type="number"
+          inputMode="decimal"
+          min={0}
+          step="any"
+          value={lumpsum}
+          onChange={(e) => setLumpsum(e.target.value)}
+          hint="A cost to complete this activity. It raises the cost budget and adds nothing to contract value."
+        />
       ) : (
         <>
           <UnitInput value={unit} onChange={setUnit} unitSuggestions={unitSuggestions} />

@@ -70,6 +70,7 @@ enum AuditAction {
   ASSET_UPDATED
   ACTIVITY_CREATED
   ACTIVITY_UPDATED
+  ACTIVITY_DELETED
   CATALOG_ACTIVITY_CREATED
   CATALOG_ACTIVITY_UPDATED
   CATALOG_ACTIVITY_DELETED
@@ -188,17 +189,18 @@ model Material {
 // because placement is a copy, neither edit nor delete affects any live project.
 
 model CatalogActivity {
-  id             String   @id @default(cuid())
-  name           String   @unique // "EIFS", "Blockwork 200mm"
-  type           LineType @default(MEASURED)
-  unit           String? // required if MEASURED; null for a pure-LUMPSUM activity
-  lumpsumBhd     Decimal? @db.Decimal(18, 3) // default COST budget in BHD if this activity is LUMPSUM
-  // Phase 6A: contract (bill) value. Null → falls back to lumpsumBhd, so "bill defaults to cost".
-  lumpsumBillBhd Decimal? @db.Decimal(18, 3)
-  description    String?
-  isActive       Boolean  @default(true)
-  sortOrder      Int      @default(0)
-  createdAt      DateTime @default(now())
+  id          String   @id @default(cuid())
+  name        String   @unique // "EIFS", "Blockwork 200mm"
+  type        LineType @default(MEASURED)
+  unit        String? // required if MEASURED; null for a pure-LUMPSUM activity
+  // A lumpsum is a COST to complete the activity. It raises the cost budget (BAC) and
+  // contributes NOTHING to contract value — billing happens at asset/project level, never
+  // on an activity line. (The Phase 6A "bill defaults to cost" behaviour was wrong.)
+  lumpsumBhd  Decimal? @db.Decimal(18, 3)
+  description String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
 
   subActivities CatalogSubActivity[]
   placements    Activity[] // instances snapshotted from this template (provenance)
@@ -209,8 +211,7 @@ model CatalogSubActivity {
   catalogActivityId String
   name              String
   type              LineType @default(MEASURED)
-  lumpsumBhd        Decimal? @db.Decimal(18, 3) // default COST budget in BHD if this sub-activity is LUMPSUM
-  lumpsumBillBhd    Decimal? @db.Decimal(18, 3) // contract value; null → falls back to lumpsumBhd
+  lumpsumBhd        Decimal? @db.Decimal(18, 3) // default COST budget in BHD if this sub-activity is LUMPSUM (cost only)
   sortOrder         Int      @default(0)
   isImplicit        Boolean  @default(false) // hidden line carrying a flat activity's rates
 
@@ -308,16 +309,16 @@ model Activity {
   // fixed lumpsumBhd instead and have no unit (unit null, boqQuantity 0, never read).
   type           LineType  @default(MEASURED)
   unit           String? // required for MEASURED; null for LUMPSUM
-  boqQuantity    Decimal   @db.Decimal(14, 3) // contracted/planned quantity — the CAP (0 for LUMPSUM)
-  lumpsumBhd     Decimal?  @db.Decimal(18, 3) // fixed COST budget in BHD if LUMPSUM (frozen at placement)
-  // Phase 6A: contract (bill) value for a lumpsum line; null → falls back to lumpsumBhd.
-  lumpsumBillBhd Decimal?  @db.Decimal(18, 3)
+  boqQuantity Decimal   @db.Decimal(14, 3) // contracted/planned quantity — the CAP (0 for LUMPSUM)
+  // A lumpsum is a COST to complete this activity (frozen at placement). It raises BAC and
+  // contributes ZERO to contract value — only billRate × boqQuantity earns revenue.
+  lumpsumBhd  Decimal?  @db.Decimal(18, 3)
   // Phase 6A: when the global resource cost rates were last snapshotted onto this
   // activity's budget rows (placement, or an explicit admin re-price).
-  pricedAt       DateTime?
-  sortOrder      Int       @default(0)
-  isActive       Boolean   @default(true)
-  createdAt      DateTime  @default(now())
+  pricedAt    DateTime?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
 
   // Provenance only — which catalog template this was snapshotted from (null = one-off).
   // NEVER read when deriving a budget; SetNull so deleting the template can't touch this row.
@@ -345,16 +346,15 @@ model Activity {
 // back to the catalog, so editing/deleting a catalog activity never touches them.
 
 model SubActivity {
-  id             String   @id @default(cuid())
-  activityId     String
-  name           String
-  type           LineType @default(MEASURED)
-  lumpsumBhd     Decimal? @db.Decimal(18, 3) // frozen COST budget in BHD if this sub-activity is LUMPSUM
-  lumpsumBillBhd Decimal? @db.Decimal(18, 3) // contract value; null → falls back to lumpsumBhd
-  sortOrder      Int      @default(0)
-  isActive       Boolean  @default(true)
-  isImplicit     Boolean  @default(false) // the hidden single line carrying a flat activity's rates
-  createdAt      DateTime @default(now())
+  id         String   @id @default(cuid())
+  activityId String
+  name       String
+  type       LineType @default(MEASURED)
+  lumpsumBhd Decimal? @db.Decimal(18, 3) // frozen COST budget in BHD if this sub-activity is LUMPSUM (cost only)
+  sortOrder  Int      @default(0)
+  isActive   Boolean  @default(true)
+  isImplicit Boolean  @default(false) // the hidden single line carrying a flat activity's rates
+  createdAt  DateTime @default(now())
 
   activity       Activity                    @relation(fields: [activityId], references: [id], onDelete: Cascade)
   manpowerBudget SubActivityManpowerBudget[]

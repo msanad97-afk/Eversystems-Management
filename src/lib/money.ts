@@ -11,7 +11,12 @@ import { round } from '@/lib/budget'
  *
  * CONTRACT value (revenue):
  *   - measured = Activity.billRate × BOQ
- *   - lumpsum  = lumpsumBillBhd ?? lumpsumBhd  ("bill defaults to cost")
+ *   - lumpsum  = NOTHING. A lumpsum is a cost to complete the activity, never revenue;
+ *     billing happens at asset/project level, not on an activity line.
+ *
+ * A consequence worth stating plainly: a project carrying lumpsum costs with no bill rates
+ * set shows a NEGATIVE margin. That is the correct reading — real cost, no revenue recorded
+ * against it yet — not a defect.
  *
  * Cost rates are the ones FROZEN onto the budget rows at placement, never the live global
  * catalog rates — so editing a global rate can't re-price a placed project.
@@ -51,7 +56,6 @@ export interface MoneySubActivity {
   name: string
   type: 'MEASURED' | 'LUMPSUM'
   lumpsumBhd: number | null
-  lumpsumBillBhd: number | null
   manpower: MoneyManpowerLine[]
   materials: MoneyMaterialLine[]
 }
@@ -63,7 +67,6 @@ export interface MoneyActivity {
   unit: string | null
   boqQuantity: number
   lumpsumBhd: number | null
-  lumpsumBillBhd: number | null
   costRate: number | null
   billRate: number | null
   subActivities: MoneySubActivity[]
@@ -112,11 +115,6 @@ export interface ProjectMoney {
 
 // ─── Derivation ──────────────────────────────────────────────────────────────
 
-/** Lumpsum contract value: explicit bill, else the cost ("bill defaults to cost"). */
-export function lumpsumBill(lumpsumBhd: number | null, lumpsumBillBhd: number | null): number {
-  return lumpsumBillBhd ?? lumpsumBhd ?? 0
-}
-
 export function deriveActivityMoney(a: MoneyActivity): ActivityMoney {
   const unpriced: UnpricedResource[] = []
   const flag = (kind: UnpricedKind, resourceId: string | null, resourceName: string) =>
@@ -145,29 +143,24 @@ export function deriveActivityMoney(a: MoneyActivity): ActivityMoney {
     else measuredCost += a.costRate * a.boqQuantity
   }
 
-  // ── lumpsum cost (sub-activities are the source of truth; activity-level only if none) ──
+  // ── lumpsum COST (sub-activities are the source of truth; activity-level only if none) ──
+  // Deliberately cost-only: a lumpsum never contributes to contract value.
   let lumpsumCost = 0
-  let lumpsumContract = 0
   if (lumpsumSubs.length > 0) {
-    for (const s of lumpsumSubs) {
-      lumpsumCost += s.lumpsumBhd ?? 0
-      lumpsumContract += lumpsumBill(s.lumpsumBhd, s.lumpsumBillBhd)
-    }
+    for (const s of lumpsumSubs) lumpsumCost += s.lumpsumBhd ?? 0
   } else if (a.type === 'LUMPSUM' && a.subActivities.length === 0) {
     lumpsumCost += a.lumpsumBhd ?? 0
-    lumpsumContract += lumpsumBill(a.lumpsumBhd, a.lumpsumBillBhd)
   }
 
-  // ── measured contract value ──
+  // ── contract value: measured bill rate only, the single source of revenue ──
   let measuredContract = 0
-  const measuredCarriesValue = a.type === 'MEASURED'
-  if (measuredCarriesValue) {
+  if (a.type === 'MEASURED') {
     if (a.billRate == null) flag('ACTIVITY_BILL', null, a.name)
     else measuredContract += a.billRate * a.boqQuantity
   }
 
   const costBudget = round(measuredCost + lumpsumCost, MONEY_DP)
-  const contractValue = round(measuredContract + lumpsumContract, MONEY_DP)
+  const contractValue = round(measuredContract, MONEY_DP)
 
   let costSource: CostSource = 'NONE'
   const hasMeasuredCost = hasBuildUp || (a.type === 'MEASURED' && a.costRate != null)

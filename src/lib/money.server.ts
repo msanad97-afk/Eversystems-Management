@@ -58,12 +58,12 @@ export async function repriceActivity(tx: Tx, activityId: string): Promise<RateC
 
 const activitySelect = {
   id: true, ref: true, name: true, type: true, unit: true, boqQuantity: true,
-  lumpsumBhd: true, lumpsumBillBhd: true, costRate: true, billRate: true, pricedAt: true,
+  lumpsumBhd: true, costRate: true, billRate: true, pricedAt: true,
   subActivities: {
     where: { isActive: true },
     orderBy: { sortOrder: 'asc' as const },
     select: {
-      id: true, name: true, type: true, lumpsumBhd: true, lumpsumBillBhd: true,
+      id: true, name: true, type: true, lumpsumBhd: true,
       manpowerBudget: { select: { hoursPerUnit: true, costRateAtPlacement: true, category: { select: { id: true, name: true } } } },
       materialBudget: { select: { qtyPerUnit: true, costRateAtPlacement: true, material: { select: { id: true, name: true, unit: true } } } },
     },
@@ -78,7 +78,6 @@ type Loaded = {
   unit: string | null
   boqQuantity: unknown
   lumpsumBhd: unknown
-  lumpsumBillBhd: unknown
   costRate: unknown
   billRate: unknown
   subActivities: {
@@ -86,7 +85,6 @@ type Loaded = {
     name: string
     type: 'MEASURED' | 'LUMPSUM'
     lumpsumBhd: unknown
-    lumpsumBillBhd: unknown
     manpowerBudget: { hoursPerUnit: unknown; costRateAtPlacement: unknown; category: { id: string; name: string } }[]
     materialBudget: { qtyPerUnit: unknown; costRateAtPlacement: unknown; material: { id: string; name: string; unit: string } }[]
   }[]
@@ -99,13 +97,11 @@ function toInput(a: Loaded): MoneyActivity {
     id: a.id, ref: a.ref, name: a.name, type: a.type, unit: a.unit,
     boqQuantity: Number(a.boqQuantity),
     lumpsumBhd: n(a.lumpsumBhd),
-    lumpsumBillBhd: n(a.lumpsumBillBhd),
     costRate: n(a.costRate),
     billRate: n(a.billRate),
     subActivities: a.subActivities.map((s) => ({
       id: s.id, name: s.name, type: s.type,
       lumpsumBhd: n(s.lumpsumBhd),
-      lumpsumBillBhd: n(s.lumpsumBillBhd),
       manpower: s.manpowerBudget.map((b) => ({
         laborCategoryId: b.category.id,
         laborCategoryName: b.category.name,

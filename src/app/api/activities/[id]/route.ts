@@ -48,12 +48,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     data.lumpsumBhd = lump
   }
   // ─── Phase 6A money fields (ADMIN-only route already) ───
-  // Contract value for a lumpsum line; null clears it so bill falls back to cost.
-  if ('lumpsumBillBhd' in body && activity.type === 'LUMPSUM') {
-    const v = parseMoney(body.lumpsumBillBhd)
-    if (v === undefined) return NextResponse.json({ error: 'The lumpsum contract value must be a number of 0 or more.' }, { status: 400 })
-    data.lumpsumBillBhd = v
-  }
+  // A lumpsum carries no bill side — revenue comes only from a measured line's billRate.
   // costRate = fallback cost/unit for bare measured lines; billRate = revenue per unit.
   if ('costRate' in body && activity.type === 'MEASURED') {
     const v = parseMoney(body.costRate)
@@ -101,4 +96,60 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       lumpsumBhd: updated.lumpsumBhd == null ? null : Number(updated.lumpsumBhd),
     },
   })
+}
+
+/**
+ * Remove an activity. Same safe rule as the catalogs: if it has never been reported against
+ * (no ReportActivity group, no ReportSubActivity row beneath it) it is hard-deleted, taking
+ * its sub-activities and frozen budget rows with it via cascade. If it HAS been used it is
+ * deactivated instead, so no approved report ever loses the line it was written against —
+ * and no actual cost silently vanishes from the project's AC. The response says which
+ * happened, and why, so the UI can explain rather than just refusing.
+ */
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  const guard = await requireAdmin()
+  if ('error' in guard) return guard.error
+
+  const activity = await prisma.activity.findUnique({
+    where: { id: params.id },
+    select: {
+      id: true,
+      name: true,
+      asset: { select: { projectId: true } },
+      _count: { select: { progress: true } },
+      subActivities: { select: { _count: { select: { progress: true } } } },
+    },
+  })
+  if (!activity) return NextResponse.json({ error: 'Activity not found.' }, { status: 404 })
+
+  const reportActivities = activity._count.progress
+  const reportedSubActivities = activity.subActivities.reduce((sum, s) => sum + s._count.progress, 0)
+  const references = { reportActivities, reportedSubActivities }
+  const total = reportActivities + reportedSubActivities
+
+  if (total === 0) {
+    await prisma.activity.delete({ where: { id: activity.id } })
+    writeAuditLog({
+      action: 'ACTIVITY_DELETED',
+      userId: guard.user.id,
+      projectId: activity.asset.projectId,
+      entity: 'Activity',
+      entityId: activity.id,
+      metadata: { op: 'delete', name: activity.name },
+      ipAddress: getClientIp(req),
+    })
+    return NextResponse.json({ ok: true, deleted: true, id: activity.id })
+  }
+
+  await prisma.activity.update({ where: { id: activity.id }, data: { isActive: false } })
+  writeAuditLog({
+    action: 'ACTIVITY_UPDATED',
+    userId: guard.user.id,
+    projectId: activity.asset.projectId,
+    entity: 'Activity',
+    entityId: activity.id,
+    metadata: { op: 'deactivate', reason: 'in_use', references },
+    ipAddress: getClientIp(req),
+  })
+  return NextResponse.json({ ok: true, deactivated: true, id: activity.id, references })
 }

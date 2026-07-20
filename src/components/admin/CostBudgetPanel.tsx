@@ -29,6 +29,8 @@ export function CostBudgetPanel({ money }: { money: ProjectMoney }) {
         <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Cost budget &amp; contract value</h2>
         <p className="text-xs text-fg-subtle">
           Priced from the cost rates frozen when each activity was placed — editing a global catalog rate never moves this.
+          Lumpsum lines are a <span className="font-medium">cost</span>: they raise the cost budget and add nothing to contract
+          value, which comes only from a measured line&apos;s bill rate.
         </p>
       </div>
 
@@ -83,6 +85,14 @@ export function CostBudgetPanel({ money }: { money: ProjectMoney }) {
               tone={money.margin < 0 ? 'danger' : undefined}
             />
           </div>
+
+          {/* A lumpsum-costed project with no bill rates reads negative. Say so, or it looks broken. */}
+          {money.margin < 0 && money.contractValue === 0 && money.bac > 0 && (
+            <p className="text-xs text-fg-subtle">
+              Margin is negative because this scope carries cost but no contract value yet. Set a bill rate on the measured
+              activities to record the revenue side.
+            </p>
+          )}
 
           <div className="space-y-3">
             {money.assets.map((asset) => (

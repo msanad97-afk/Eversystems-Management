@@ -11,14 +11,12 @@ import { IMPLICIT_SUBACTIVITY_NAME } from './constants'
 export function implicitSubActivityCreate(
   type: 'MEASURED' | 'LUMPSUM',
   lumpsumBhd: number | null,
-  lumpsumBillBhd: number | null = null,
 ): Prisma.SubActivityCreateWithoutActivityInput {
   return {
     name: IMPLICIT_SUBACTIVITY_NAME,
     type,
     isImplicit: true,
     lumpsumBhd: type === 'LUMPSUM' ? lumpsumBhd : null,
-    lumpsumBillBhd: type === 'LUMPSUM' ? lumpsumBillBhd : null,
     sortOrder: 0,
   }
 }

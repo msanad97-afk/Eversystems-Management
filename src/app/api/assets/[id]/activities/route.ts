@@ -13,6 +13,17 @@ function parsePositive(v: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
+/**
+ * Optional money field captured at placement: blank/absent → null, a number ≥ 0 sets it,
+ * anything else is invalid (undefined). Deliberately optional — a measured line with no bill
+ * rate is allowed and already surfaces loudly as ACTIVITY_BILL in the unpriced warning.
+ */
+function parseOptionalMoney(v: unknown): number | null | undefined {
+  if (v === undefined || v === null || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0 ? n : undefined
+}
+
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdmin()
   if ('error' in guard) return guard.error
@@ -47,10 +58,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     let boqQuantity: number | undefined
     let lumpsumOverrideBhd: number | null | undefined
+    let billRate: number | null = null
     if (template.type === 'MEASURED') {
       const boq = parsePositive(body.boqQuantity)
       if (boq === null) return NextResponse.json({ error: 'A measured activity needs a BOQ quantity greater than 0.' }, { status: 400 })
       boqQuantity = boq
+      const rate = parseOptionalMoney(body.billRate)
+      if (rate === undefined) return NextResponse.json({ error: 'Bill rate must be a number of 0 or more.' }, { status: 400 })
+      billRate = rate
     } else {
       const override = body.lumpsumBhd === undefined || body.lumpsumBhd === null || body.lumpsumBhd === '' ? undefined : parsePositive(body.lumpsumBhd)
       if (override === null) return NextResponse.json({ error: 'The lumpsum amount must be greater than 0.' }, { status: 400 })
@@ -60,7 +75,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
 
     const created = await prisma.$transaction((tx) =>
-      snapshotCatalogActivity(tx, template.id, { assetId: asset.id, sortOrder: count, ref, boqQuantity, lumpsumOverrideBhd }),
+      snapshotCatalogActivity(tx, template.id, { assetId: asset.id, sortOrder: count, ref, boqQuantity, lumpsumOverrideBhd, billRate }),
     )
 
     writeAuditLog({
@@ -82,21 +97,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const name = isNonEmptyString(body?.name) ? body.name.trim() : null
   if (!name) return NextResponse.json({ error: 'Activity name is required.' }, { status: 400 })
 
-  let data: { type: 'MEASURED' | 'LUMPSUM'; unit: string | null; boqQuantity: number; lumpsumBhd: number | null; lumpsumBillBhd: number | null }
+  let data: { type: 'MEASURED' | 'LUMPSUM'; unit: string | null; boqQuantity: number; lumpsumBhd: number | null; billRate: number | null }
   if (type === 'LUMPSUM') {
+    // A lumpsum is purely a COST — it never carries contract value, so there is no bill side.
     const lumpsumBhd = parsePositive(body.lumpsumBhd)
     if (lumpsumBhd === null) return NextResponse.json({ error: 'A lumpsum activity needs a BHD cost amount greater than 0.' }, { status: 400 })
-    // Optional contract value; null → bill falls back to cost when derived.
-    const bill = body.lumpsumBillBhd === undefined || body.lumpsumBillBhd === null || body.lumpsumBillBhd === '' ? null : parsePositive(body.lumpsumBillBhd)
-    if (body.lumpsumBillBhd !== undefined && body.lumpsumBillBhd !== null && body.lumpsumBillBhd !== '' && bill === null) {
-      return NextResponse.json({ error: 'The lumpsum contract value must be greater than 0.' }, { status: 400 })
-    }
-    data = { type, unit: null, boqQuantity: 0, lumpsumBhd, lumpsumBillBhd: bill }
+    data = { type, unit: null, boqQuantity: 0, lumpsumBhd, billRate: null }
   } else {
     const unit = isNonEmptyString(body?.unit) ? body.unit.trim() : null
     const boq = parsePositive(body?.boqQuantity)
     if (!unit || boq === null) return NextResponse.json({ error: 'A measured activity needs a unit and a BOQ quantity greater than 0.' }, { status: 400 })
-    data = { type, unit, boqQuantity: boq, lumpsumBhd: null, lumpsumBillBhd: null }
+    const rate = parseOptionalMoney(body?.billRate)
+    if (rate === undefined) return NextResponse.json({ error: 'Bill rate must be a number of 0 or more.' }, { status: 400 })
+    data = { type, unit, boqQuantity: boq, lumpsumBhd: null, billRate: rate }
   }
 
   const activity = await prisma.activity.create({
@@ -104,7 +117,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       assetId: asset.id, name, ref, sortOrder: count, ...data,
       pricedAt: new Date(),
       // One-off lines have no named sub-activities → carry a single implicit sub.
-      subActivities: { create: [implicitSubActivityCreate(data.type, data.lumpsumBhd, data.lumpsumBillBhd)] },
+      subActivities: { create: [implicitSubActivityCreate(data.type, data.lumpsumBhd)] },
     },
     select: scopeActivitySelect,
   })
@@ -115,7 +128,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     projectId: asset.projectId,
     entity: 'Activity',
     entityId: activity.id,
-    metadata: { name, type, unit: data.unit, boqQuantity: data.boqQuantity, lumpsumBhd: data.lumpsumBhd },
+    metadata: { name, type, unit: data.unit, boqQuantity: data.boqQuantity, lumpsumBhd: data.lumpsumBhd, billRate: data.billRate },
     ipAddress: getClientIp(req),
   })
 
