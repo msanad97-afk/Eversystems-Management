@@ -12,6 +12,11 @@ export const scopeActivitySelect = {
   unit: true,
   boqQuantity: true,
   lumpsumBhd: true,
+  // Phase 6A money fields (this scope view is ADMIN-only).
+  lumpsumBillBhd: true,
+  costRate: true,
+  billRate: true,
+  pricedAt: true,
   isActive: true,
   sortOrder: true,
   catalogActivityId: true,
@@ -26,6 +31,10 @@ export type ScopeActivityRow = {
   unit: string | null
   boqQuantity: unknown
   lumpsumBhd: unknown
+  lumpsumBillBhd: unknown
+  costRate: unknown
+  billRate: unknown
+  pricedAt: Date | null
   isActive: boolean
   sortOrder: number
   catalogActivityId: string | null
@@ -40,11 +49,17 @@ export interface SerializedScopeActivity {
   unit: string | null
   boqQuantity: number
   lumpsumBhd: number | null
+  lumpsumBillBhd: number | null
+  costRate: number | null
+  billRate: number | null
+  pricedAt: string | null
   isActive: boolean
   sortOrder: number
   fromCatalog: boolean
   subActivityCount: number
 }
+
+const n = (v: unknown): number | null => (v == null ? null : Number(v))
 
 export function serializeScopeActivity(a: ScopeActivityRow): SerializedScopeActivity {
   return {
@@ -54,7 +69,11 @@ export function serializeScopeActivity(a: ScopeActivityRow): SerializedScopeActi
     type: a.type,
     unit: a.unit,
     boqQuantity: Number(a.boqQuantity),
-    lumpsumBhd: a.lumpsumBhd == null ? null : Number(a.lumpsumBhd),
+    lumpsumBhd: n(a.lumpsumBhd),
+    lumpsumBillBhd: n(a.lumpsumBillBhd),
+    costRate: n(a.costRate),
+    billRate: n(a.billRate),
+    pricedAt: a.pricedAt ? a.pricedAt.toISOString() : null,
     isActive: a.isActive,
     sortOrder: a.sortOrder,
     fromCatalog: a.catalogActivityId != null,

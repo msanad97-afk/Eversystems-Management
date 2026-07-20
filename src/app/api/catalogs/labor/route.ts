@@ -5,16 +5,28 @@ import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
 import { isNonEmptyString } from '@/lib/validation'
 
+/** Phase 6A: hourlyRate is a COST rate — returned to ADMIN only (money is admin-only). */
+function parseRate(v: unknown): number | null | undefined {
+  if (v === undefined) return undefined
+  if (v === null || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0 ? n : undefined
+}
+
 export async function GET(req: NextRequest) {
   const guard = await requireUser()
   if ('error' in guard) return guard.error
 
-  const wantAll = req.nextUrl.searchParams.get('all') === 'true' && guard.user.role === 'ADMIN'
-  const categories = await prisma.laborCategory.findMany({
+  const isAdmin = guard.user.role === 'ADMIN'
+  const wantAll = req.nextUrl.searchParams.get('all') === 'true' && isAdmin
+  const rows = await prisma.laborCategory.findMany({
     where: wantAll ? undefined : { isActive: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-    select: { id: true, name: true, isActive: true, sortOrder: true },
+    select: { id: true, name: true, isActive: true, sortOrder: true, hourlyRate: true },
   })
+  const categories = rows.map(({ hourlyRate, ...c }) =>
+    isAdmin ? { ...c, hourlyRate: hourlyRate == null ? null : Number(hourlyRate) } : c,
+  )
   return NextResponse.json({ categories })
 }
 
@@ -29,10 +41,11 @@ export async function POST(req: NextRequest) {
   const exists = await prisma.laborCategory.findUnique({ where: { name } })
   if (exists) return NextResponse.json({ error: 'A category with this name already exists.' }, { status: 409 })
 
+  const rate = parseRate(body.hourlyRate)
   const count = await prisma.laborCategory.count()
   const created = await prisma.laborCategory.create({
-    data: { name, sortOrder: typeof body.sortOrder === 'number' ? body.sortOrder : count },
-    select: { id: true, name: true, isActive: true, sortOrder: true },
+    data: { name, sortOrder: typeof body.sortOrder === 'number' ? body.sortOrder : count, hourlyRate: rate ?? null },
+    select: { id: true, name: true, isActive: true, sortOrder: true, hourlyRate: true },
   })
 
   writeAuditLog({
@@ -44,7 +57,10 @@ export async function POST(req: NextRequest) {
     ipAddress: getClientIp(req),
   })
 
-  return NextResponse.json({ category: created }, { status: 201 })
+  return NextResponse.json(
+    { category: { ...created, hourlyRate: created.hourlyRate == null ? null : Number(created.hourlyRate) } },
+    { status: 201 },
+  )
 }
 
 export async function PATCH(req: NextRequest) {
@@ -62,6 +78,11 @@ export async function PATCH(req: NextRequest) {
   if (isNonEmptyString(body.name)) data.name = body.name.trim()
   if (typeof body.isActive === 'boolean') data.isActive = body.isActive
   if (typeof body.sortOrder === 'number') data.sortOrder = body.sortOrder
+  if ('hourlyRate' in body) {
+    const rate = parseRate(body.hourlyRate)
+    if (rate === undefined) return NextResponse.json({ error: 'Hourly rate must be a number of 0 or more.' }, { status: 400 })
+    data.hourlyRate = rate
+  }
 
   if (typeof data.name === 'string' && data.name !== existing.name) {
     const dup = await prisma.laborCategory.findUnique({ where: { name: data.name } })
@@ -71,7 +92,7 @@ export async function PATCH(req: NextRequest) {
   const updated = await prisma.laborCategory.update({
     where: { id },
     data,
-    select: { id: true, name: true, isActive: true, sortOrder: true },
+    select: { id: true, name: true, isActive: true, sortOrder: true, hourlyRate: true },
   })
 
   writeAuditLog({
@@ -83,7 +104,7 @@ export async function PATCH(req: NextRequest) {
     ipAddress: getClientIp(req),
   })
 
-  return NextResponse.json({ category: updated })
+  return NextResponse.json({ category: { ...updated, hourlyRate: updated.hourlyRate == null ? null : Number(updated.hourlyRate) } })
 }
 
 /**

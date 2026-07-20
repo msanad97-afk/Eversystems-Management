@@ -24,6 +24,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (isProjectStatus(body.status)) data.status = body.status
   if ('startDate' in body) data.startDate = parseDate(body.startDate)
 
+  // ─── Phase 6A header financials (cross-checked against the bottom-up build-up) ───
+  const money = (v: unknown): number | null | undefined => {
+    if (v === null || v === '') return null
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0 ? n : undefined
+  }
+  for (const field of ['contractValue', 'budgetCost'] as const) {
+    if (field in body) {
+      const v = money(body[field])
+      if (v === undefined) return NextResponse.json({ error: `${field} must be a number of 0 or more.` }, { status: 400 })
+      data[field] = v
+    }
+  }
+
   // ─── Member diff ───
   let toAdd: string[] = []
   let toRemove: string[] = []

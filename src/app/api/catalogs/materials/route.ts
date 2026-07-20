@@ -5,16 +5,28 @@ import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
 import { isNonEmptyString } from '@/lib/validation'
 
+/** Phase 6A: unitRate is a COST rate — returned to ADMIN only (money is admin-only). */
+function parseRate(v: unknown): number | null | undefined {
+  if (v === undefined) return undefined
+  if (v === null || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0 ? n : undefined
+}
+
 export async function GET(req: NextRequest) {
   const guard = await requireUser()
   if ('error' in guard) return guard.error
 
-  const wantAll = req.nextUrl.searchParams.get('all') === 'true' && guard.user.role === 'ADMIN'
-  const materials = await prisma.material.findMany({
+  const isAdmin = guard.user.role === 'ADMIN'
+  const wantAll = req.nextUrl.searchParams.get('all') === 'true' && isAdmin
+  const rows = await prisma.material.findMany({
     where: wantAll ? undefined : { isActive: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-    select: { id: true, name: true, unit: true, isActive: true, sortOrder: true },
+    select: { id: true, name: true, unit: true, isActive: true, sortOrder: true, unitRate: true },
   })
+  const materials = rows.map(({ unitRate, ...m }) =>
+    isAdmin ? { ...m, unitRate: unitRate == null ? null : Number(unitRate) } : m,
+  )
   return NextResponse.json({ materials })
 }
 
@@ -30,10 +42,11 @@ export async function POST(req: NextRequest) {
   const exists = await prisma.material.findUnique({ where: { name } })
   if (exists) return NextResponse.json({ error: 'A material with this name already exists.' }, { status: 409 })
 
+  const rate = parseRate(body.unitRate)
   const count = await prisma.material.count()
   const created = await prisma.material.create({
-    data: { name, unit, sortOrder: typeof body.sortOrder === 'number' ? body.sortOrder : count },
-    select: { id: true, name: true, unit: true, isActive: true, sortOrder: true },
+    data: { name, unit, sortOrder: typeof body.sortOrder === 'number' ? body.sortOrder : count, unitRate: rate ?? null },
+    select: { id: true, name: true, unit: true, isActive: true, sortOrder: true, unitRate: true },
   })
 
   writeAuditLog({
@@ -45,7 +58,10 @@ export async function POST(req: NextRequest) {
     ipAddress: getClientIp(req),
   })
 
-  return NextResponse.json({ material: created }, { status: 201 })
+  return NextResponse.json(
+    { material: { ...created, unitRate: created.unitRate == null ? null : Number(created.unitRate) } },
+    { status: 201 },
+  )
 }
 
 export async function PATCH(req: NextRequest) {
@@ -64,6 +80,11 @@ export async function PATCH(req: NextRequest) {
   if (isNonEmptyString(body.unit)) data.unit = body.unit.trim()
   if (typeof body.isActive === 'boolean') data.isActive = body.isActive
   if (typeof body.sortOrder === 'number') data.sortOrder = body.sortOrder
+  if ('unitRate' in body) {
+    const rate = parseRate(body.unitRate)
+    if (rate === undefined) return NextResponse.json({ error: 'Unit rate must be a number of 0 or more.' }, { status: 400 })
+    data.unitRate = rate
+  }
 
   if (typeof data.name === 'string' && data.name !== existing.name) {
     const dup = await prisma.material.findUnique({ where: { name: data.name } })
@@ -73,7 +94,7 @@ export async function PATCH(req: NextRequest) {
   const updated = await prisma.material.update({
     where: { id },
     data,
-    select: { id: true, name: true, unit: true, isActive: true, sortOrder: true },
+    select: { id: true, name: true, unit: true, isActive: true, sortOrder: true, unitRate: true },
   })
 
   writeAuditLog({
@@ -85,7 +106,7 @@ export async function PATCH(req: NextRequest) {
     ipAddress: getClientIp(req),
   })
 
-  return NextResponse.json({ material: updated })
+  return NextResponse.json({ material: { ...updated, unitRate: updated.unitRate == null ? null : Number(updated.unitRate) } })
 }
 
 /**

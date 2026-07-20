@@ -24,8 +24,10 @@ export async function snapshotCatalogActivity(
       subActivities: {
         orderBy: { sortOrder: 'asc' },
         include: {
-          manpowerRates: { select: { laborCategoryId: true, hoursPerUnit: true } },
-          materialRates: { select: { materialId: true, qtyPerUnit: true } },
+          // Phase 6A: pull each resource's CURRENT global cost rate so it can be frozen
+          // onto the placed budget row (see costRateAtPlacement).
+          manpowerRates: { select: { laborCategoryId: true, hoursPerUnit: true, category: { select: { hourlyRate: true } } } },
+          materialRates: { select: { materialId: true, qtyPerUnit: true, material: { select: { unitRate: true } } } },
         },
       },
     },
@@ -37,23 +39,34 @@ export async function snapshotCatalogActivity(
     ? (opts.lumpsumOverrideBhd ?? (template.lumpsumBhd ? Number(template.lumpsumBhd) : null))
     : null
 
+  const lumpsumBillBhd = isLumpsum && template.lumpsumBillBhd ? Number(template.lumpsumBillBhd) : null
+
   const copiedSubs = template.subActivities.map((s) => ({
     name: s.name,
     type: s.type,
     lumpsumBhd: s.lumpsumBhd ? Number(s.lumpsumBhd) : null,
+    lumpsumBillBhd: s.lumpsumBillBhd ? Number(s.lumpsumBillBhd) : null,
     sortOrder: s.sortOrder,
     isImplicit: s.isImplicit,
     manpowerBudget: {
-      create: s.manpowerRates.map((r) => ({ laborCategoryId: r.laborCategoryId, hoursPerUnit: Number(r.hoursPerUnit) })),
+      create: s.manpowerRates.map((r) => ({
+        laborCategoryId: r.laborCategoryId,
+        hoursPerUnit: Number(r.hoursPerUnit),
+        costRateAtPlacement: r.category.hourlyRate == null ? null : Number(r.category.hourlyRate),
+      })),
     },
     materialBudget: {
-      create: s.materialRates.map((r) => ({ materialId: r.materialId, qtyPerUnit: Number(r.qtyPerUnit) })),
+      create: s.materialRates.map((r) => ({
+        materialId: r.materialId,
+        qtyPerUnit: Number(r.qtyPerUnit),
+        costRateAtPlacement: r.material.unitRate == null ? null : Number(r.material.unitRate),
+      })),
     },
   }))
 
   // Every reportable activity needs at least one sub-activity — add the implicit one when
   // the template has no named sub-activities (a bare measured line or a pure lumpsum).
-  const subCreate = copiedSubs.length > 0 ? copiedSubs : [implicitSubActivityCreate(template.type, lumpsumBhd)]
+  const subCreate = copiedSubs.length > 0 ? copiedSubs : [implicitSubActivityCreate(template.type, lumpsumBhd, lumpsumBillBhd)]
 
   const created = await tx.activity.create({
     data: {
@@ -65,6 +78,8 @@ export async function snapshotCatalogActivity(
       unit: isLumpsum ? null : template.unit,
       boqQuantity: isLumpsum ? 0 : (opts.boqQuantity ?? 0),
       lumpsumBhd,
+      lumpsumBillBhd,
+      pricedAt: new Date(), // cost rates frozen as of now
       sortOrder: opts.sortOrder,
       subActivities: { create: subCreate },
     },

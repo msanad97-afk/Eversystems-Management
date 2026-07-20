@@ -9,6 +9,12 @@ function parsePositive(v: unknown): number | null {
   const n = Number(v)
   return Number.isFinite(n) && n > 0 ? n : null
 }
+/** Money field: null/'' clears it, a number ≥ 0 sets it, anything else is invalid. */
+function parseMoney(v: unknown): number | null | undefined {
+  if (v === null || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0 ? n : undefined
+}
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdmin()
@@ -38,8 +44,26 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // Lumpsum amount applies to LUMPSUM lines only (Q4: editable post-placement).
   if ('lumpsumBhd' in body && activity.type === 'LUMPSUM') {
     const lump = parsePositive(body.lumpsumBhd)
-    if (lump === null) return NextResponse.json({ error: 'The lumpsum amount must be greater than 0.' }, { status: 400 })
+    if (lump === null) return NextResponse.json({ error: 'The lumpsum cost must be greater than 0.' }, { status: 400 })
     data.lumpsumBhd = lump
+  }
+  // ─── Phase 6A money fields (ADMIN-only route already) ───
+  // Contract value for a lumpsum line; null clears it so bill falls back to cost.
+  if ('lumpsumBillBhd' in body && activity.type === 'LUMPSUM') {
+    const v = parseMoney(body.lumpsumBillBhd)
+    if (v === undefined) return NextResponse.json({ error: 'The lumpsum contract value must be a number of 0 or more.' }, { status: 400 })
+    data.lumpsumBillBhd = v
+  }
+  // costRate = fallback cost/unit for bare measured lines; billRate = revenue per unit.
+  if ('costRate' in body && activity.type === 'MEASURED') {
+    const v = parseMoney(body.costRate)
+    if (v === undefined) return NextResponse.json({ error: 'Cost rate must be a number of 0 or more.' }, { status: 400 })
+    data.costRate = v
+  }
+  if ('billRate' in body && activity.type === 'MEASURED') {
+    const v = parseMoney(body.billRate)
+    if (v === undefined) return NextResponse.json({ error: 'Bill rate must be a number of 0 or more.' }, { status: 400 })
+    data.billRate = v
   }
 
   const updated = await prisma.$transaction(async (tx) => {

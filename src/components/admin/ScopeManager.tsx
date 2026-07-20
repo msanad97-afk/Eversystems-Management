@@ -17,6 +17,10 @@ export interface ScopeActivityData {
   unit: string | null
   boqQuantity: number
   lumpsumBhd: number | null
+  lumpsumBillBhd: number | null
+  costRate: number | null
+  billRate: number | null
+  pricedAt: string | null
   isActive: boolean
   sortOrder: number
   fromCatalog: boolean
@@ -80,6 +84,33 @@ export function ScopeManager({
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Something went wrong.', 'error')
       return false
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * Re-price: re-snapshot current global cost rates onto this activity's frozen budget
+   * rows. This MOVES the budget baseline (and therefore variance/CPI), so warn clearly.
+   */
+  async function reprice(act: ScopeActivityData) {
+    const priced = act.pricedAt ? new Date(act.pricedAt).toLocaleDateString() : 'never'
+    const ok = confirm(
+      `Re-price "${act.name}"?\n\n` +
+        `Its cost rates were last frozen: ${priced}.\n\n` +
+        `This updates the budget to today's catalog rates and CHANGES THE BUDGET BASELINE — ` +
+        `cost variance and CPI for this activity will move. Every rate change is recorded in the audit log.`,
+    )
+    if (!ok) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/activities/${act.id}/reprice`, { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? 'Could not re-price.')
+      router.refresh()
+      showToast(data.changes?.length ? `Re-priced — ${data.changes.length} rate(s) changed.` : 'Already at current rates.', 'success')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not re-price.', 'error')
     } finally {
       setBusy(false)
     }
@@ -211,6 +242,7 @@ export function ScopeManager({
                           {!act.isActive && <Badge tone="neutral" className="ml-2">inactive</Badge>}
                         </div>
                         <Button size="sm" variant="ghost" onClick={() => setEditActivity(act)}>Edit</Button>
+                        <Button size="sm" variant="ghost" onClick={() => reprice(act)}>Re-price</Button>
                         <Button size="sm" variant="ghost" onClick={() => call('PATCH', `/api/activities/${act.id}`, { isActive: !act.isActive })}>
                           {act.isActive ? 'Deactivate' : 'Activate'}
                         </Button>
@@ -435,6 +467,11 @@ function EditActivityForm({ activity, unitSuggestions, busy, onSave, onCancel }:
   const [unit, setUnit] = useState(activity.unit ?? '')
   const [boq, setBoq] = useState(String(activity.boqQuantity))
   const [lumpsum, setLumpsum] = useState(activity.lumpsumBhd != null ? String(activity.lumpsumBhd) : '')
+  const [lumpsumBill, setLumpsumBill] = useState(activity.lumpsumBillBhd != null ? String(activity.lumpsumBillBhd) : '')
+  const [costRate, setCostRate] = useState(activity.costRate != null ? String(activity.costRate) : '')
+  const [billRate, setBillRate] = useState(activity.billRate != null ? String(activity.billRate) : '')
+
+  const money = (v: string) => (v.trim() === '' ? null : Number(v))
 
   const valid =
     activity.type === 'LUMPSUM'
@@ -443,9 +480,12 @@ function EditActivityForm({ activity, unitSuggestions, busy, onSave, onCancel }:
 
   function save() {
     if (activity.type === 'LUMPSUM') {
-      onSave({ name: name.trim(), ref: ref.trim() || null, lumpsumBhd: Number(lumpsum) })
+      onSave({ name: name.trim(), ref: ref.trim() || null, lumpsumBhd: Number(lumpsum), lumpsumBillBhd: money(lumpsumBill) })
     } else {
-      onSave({ name: name.trim(), ref: ref.trim() || null, unit: unit.trim(), boqQuantity: Number(boq) })
+      onSave({
+        name: name.trim(), ref: ref.trim() || null, unit: unit.trim(), boqQuantity: Number(boq),
+        costRate: money(costRate), billRate: money(billRate),
+      })
     }
   }
 
@@ -454,11 +494,16 @@ function EditActivityForm({ activity, unitSuggestions, busy, onSave, onCancel }:
       <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
       <Input label="Ref (optional)" value={ref} onChange={(e) => setRef(e.target.value)} />
       {activity.type === 'LUMPSUM' ? (
-        <Input label="Lumpsum (BHD)" type="number" inputMode="decimal" min={0} step="any" value={lumpsum} onChange={(e) => setLumpsum(e.target.value)} />
+        <>
+          <Input label="Lumpsum cost (BHD)" type="number" inputMode="decimal" min={0} step="any" value={lumpsum} onChange={(e) => setLumpsum(e.target.value)} />
+          <Input label="Contract value (BHD)" type="number" inputMode="decimal" min={0} step="any" value={lumpsumBill} onChange={(e) => setLumpsumBill(e.target.value)} hint="Leave blank to bill at cost." />
+        </>
       ) : (
         <>
           <UnitInput value={unit} onChange={setUnit} unitSuggestions={unitSuggestions} />
           <Input label="BOQ quantity" type="number" inputMode="decimal" min={0} step="any" value={boq} onChange={(e) => setBoq(e.target.value)} hint="Lowering below earned-to-date is allowed; history is preserved." />
+          <Input label="Cost rate (BHD/unit)" type="number" inputMode="decimal" min={0} step="any" value={costRate} onChange={(e) => setCostRate(e.target.value)} hint="Only used when the activity has no labour/material build-up." />
+          <Input label="Bill rate (BHD/unit)" type="number" inputMode="decimal" min={0} step="any" value={billRate} onChange={(e) => setBillRate(e.target.value)} hint="Contract value per unit — the revenue source." />
         </>
       )}
       <div className="flex justify-end gap-2">

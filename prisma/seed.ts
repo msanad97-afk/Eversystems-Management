@@ -5,30 +5,32 @@ import { implicitSubActivityCreate } from '../src/lib/catalog/implicitSub'
 
 const prisma = new PrismaClient()
 
-const LABOR_CATEGORIES = [
-  'Mason',
-  'Steel Fixer',
-  'Carpenter',
-  'Plumber',
-  'Electrician',
-  'Painter',
-  'Tiler',
-  'Equipment Operator',
-  'Helper/Labourer',
-  'Foreman',
+// Phase 6A: hourlyRate / unitRate are the COST rates (BHD). Seeded on create only, so
+// re-seeding never clobbers rates an admin has edited.
+const LABOR_CATEGORIES: { name: string; hourlyRate: number }[] = [
+  { name: 'Mason', hourlyRate: 2.5 },
+  { name: 'Steel Fixer', hourlyRate: 2.5 },
+  { name: 'Carpenter', hourlyRate: 2.5 },
+  { name: 'Plumber', hourlyRate: 3 },
+  { name: 'Electrician', hourlyRate: 3 },
+  { name: 'Painter', hourlyRate: 2.25 },
+  { name: 'Tiler', hourlyRate: 2.75 },
+  { name: 'Equipment Operator', hourlyRate: 3.5 },
+  { name: 'Helper/Labourer', hourlyRate: 1.5 },
+  { name: 'Foreman', hourlyRate: 4.5 },
 ]
 
-const MATERIALS: { name: string; unit: string }[] = [
-  { name: 'OPC Cement', unit: 'bag' },
-  { name: 'Sand', unit: 'm3' },
-  { name: 'Aggregate 3/4"', unit: 'm3' },
-  { name: 'Rebar 12mm', unit: 'ton' },
-  { name: 'Rebar 16mm', unit: 'ton' },
-  { name: 'Block 200mm', unit: 'no' },
-  { name: 'Block 150mm', unit: 'no' },
-  { name: 'Ready-Mix C35', unit: 'm3' },
-  { name: 'Plywood 18mm', unit: 'sheet' },
-  { name: 'Diesel', unit: 'ltr' },
+const MATERIALS: { name: string; unit: string; unitRate: number }[] = [
+  { name: 'OPC Cement', unit: 'bag', unitRate: 1.8 },
+  { name: 'Sand', unit: 'm3', unitRate: 4.5 },
+  { name: 'Aggregate 3/4"', unit: 'm3', unitRate: 5 },
+  { name: 'Rebar 12mm', unit: 'ton', unitRate: 210 },
+  { name: 'Rebar 16mm', unit: 'ton', unitRate: 205 },
+  { name: 'Block 200mm', unit: 'no', unitRate: 0.45 },
+  { name: 'Block 150mm', unit: 'no', unitRate: 0.38 },
+  { name: 'Ready-Mix C35', unit: 'm3', unitRate: 28 },
+  { name: 'Plywood 18mm', unit: 'sheet', unitRate: 6.5 },
+  { name: 'Diesel', unit: 'ltr', unitRate: 0.18 },
 ]
 
 async function main() {
@@ -64,22 +66,22 @@ async function main() {
 
   // ─── 2. Labor categories ───
   for (let i = 0; i < LABOR_CATEGORIES.length; i++) {
-    const name = LABOR_CATEGORIES[i]!
+    const { name, hourlyRate } = LABOR_CATEGORIES[i]!
     await prisma.laborCategory.upsert({
       where: { name },
-      create: { name, sortOrder: i },
-      update: { sortOrder: i },
+      create: { name, sortOrder: i, hourlyRate },
+      update: { sortOrder: i }, // never overwrite an edited rate
     })
   }
   console.info(`Seeded ${LABOR_CATEGORIES.length} labor categories.`)
 
   // ─── 3. Materials ───
   for (let i = 0; i < MATERIALS.length; i++) {
-    const { name, unit } = MATERIALS[i]!
+    const { name, unit, unitRate } = MATERIALS[i]!
     await prisma.material.upsert({
       where: { name },
-      create: { name, unit, sortOrder: i },
-      update: { unit, sortOrder: i },
+      create: { name, unit, sortOrder: i, unitRate },
+      update: { unit, sortOrder: i }, // never overwrite an edited rate
     })
   }
   console.info(`Seeded ${MATERIALS.length} materials.`)

@@ -1,18 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { requireRole } from '@/lib/auth/permissions'
+import { requireAdmin } from '@/lib/auth/permissions'
 import { loadBudgetVsActual } from '@/lib/actuals.server'
 
+/**
+ * Phase 6A: ADMIN-only. This payload carries lumpsum budget/earned BHD, so it is a
+ * financial view — VIEWER keeps the physical-progress and dashboard views only.
+ */
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const guard = await requireRole('ADMIN', 'VIEWER')
+  const guard = await requireAdmin()
   if ('error' in guard) return guard.error
-
-  if (guard.user.role === 'VIEWER') {
-    const membership = await prisma.projectMember.findUnique({
-      where: { projectId_userId: { projectId: params.id, userId: guard.user.id } },
-    })
-    if (!membership) return NextResponse.json({ error: 'Forbidden.' }, { status: 403 })
-  }
 
   const data = await loadBudgetVsActual(params.id)
   if (!data) return NextResponse.json({ error: 'Project not found.' }, { status: 404 })

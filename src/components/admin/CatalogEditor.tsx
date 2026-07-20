@@ -13,6 +13,9 @@ export interface CatalogItem {
   unit?: string
   isActive: boolean
   sortOrder: number
+  /** Phase 6A cost rates (ADMIN-only): BHD per man-hour / per material unit. */
+  hourlyRate?: number | null
+  unitRate?: number | null
 }
 
 type Kind = 'labor' | 'material'
@@ -29,13 +32,19 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
   const [items, setItems] = useState<CatalogItem[]>(initial)
   const [name, setName] = useState('')
   const [unit, setUnit] = useState('')
+  const [rate, setRate] = useState('')
   const [adding, setAdding] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editUnit, setEditUnit] = useState('')
+  const [editRate, setEditRate] = useState('')
 
   const isMaterial = kind === 'material'
   const noun = isMaterial ? 'Material' : 'Category'
+  const rateKey = isMaterial ? 'unitRate' : 'hourlyRate'
+  const rateLabel = isMaterial ? 'Cost / unit' : 'Cost / hour'
+  const rateOf = (i: CatalogItem) => (isMaterial ? i.unitRate : i.hourlyRate)
+  const rateBody = (v: string) => ({ [rateKey]: v.trim() === '' ? null : Number(v) })
 
   async function call(method: 'POST' | 'PATCH', body: unknown): Promise<CatalogItem | null> {
     const res = await fetch(ENDPOINT[kind], {
@@ -56,18 +65,19 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
   async function add() {
     if (!name.trim() || (isMaterial && !unit.trim())) return
     setAdding(true)
-    const created = await call('POST', { name: name.trim(), unit: unit.trim() })
+    const created = await call('POST', { name: name.trim(), unit: unit.trim(), ...rateBody(rate) })
     if (created) {
       setItems((prev) => [...prev, created])
       setName('')
       setUnit('')
+      setRate('')
       showToast('Added.', 'success')
     }
     setAdding(false)
   }
 
   async function saveEdit(id: string) {
-    const updated = await call('PATCH', { id, name: editName.trim(), unit: editUnit.trim() })
+    const updated = await call('PATCH', { id, name: editName.trim(), unit: editUnit.trim(), ...rateBody(editRate) })
     if (updated) {
       setItems((prev) => prev.map((i) => (i.id === id ? updated : i)))
       setEditId(null)
@@ -137,6 +147,9 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
             <Input label="Unit" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="bag" />
           </div>
         )}
+        <div className="w-32">
+          <Input label={`${rateLabel} (BHD)`} type="number" inputMode="decimal" min={0} step="any" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="optional" />
+        </div>
         <Button onClick={add} loading={adding} disabled={!name.trim() || (isMaterial && !unit.trim())}>
           Add
         </Button>
@@ -178,6 +191,9 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
                     <Input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} />
                   </div>
                 )}
+                <div className="w-28">
+                  <Input type="number" inputMode="decimal" min={0} step="any" value={editRate} onChange={(e) => setEditRate(e.target.value)} placeholder={rateLabel} />
+                </div>
                 <Button size="sm" onClick={() => saveEdit(item.id)}>Save</Button>
                 <Button size="sm" variant="ghost" onClick={() => setEditId(null)}>Cancel</Button>
               </div>
@@ -186,6 +202,11 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
                 <div className="min-w-0 flex-1">
                   <span className="font-medium text-fg">{item.name}</span>
                   {isMaterial && <span className="ml-2 text-sm text-fg-subtle">{item.unit}</span>}
+                  {rateOf(item) == null ? (
+                    <Badge tone="danger" className="ml-2">no rate</Badge>
+                  ) : (
+                    <span className="ml-2 text-sm tabular-nums text-fg-muted">BHD {rateOf(item)!.toFixed(3)}</span>
+                  )}
                   {!item.isActive && (
                     <Badge tone="neutral" className="ml-2">inactive</Badge>
                   )}
@@ -197,6 +218,7 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
                     setEditId(item.id)
                     setEditName(item.name)
                     setEditUnit(item.unit ?? '')
+                    setEditRate(rateOf(item) == null ? '' : String(rateOf(item)))
                   }}
                 >
                   Edit

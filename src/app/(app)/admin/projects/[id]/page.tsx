@@ -5,9 +5,11 @@ import { requireAdminPage } from '@/lib/auth/permissions'
 import { ScopeManager, type ScopeAssetData, type CatalogOption } from '@/components/admin/ScopeManager'
 import { BudgetPanel } from '@/components/admin/BudgetPanel'
 import { VariancePanel } from '@/components/admin/VariancePanel'
+import { CostBudgetPanel } from '@/components/admin/CostBudgetPanel'
 import { serializeScopeActivity, scopeActivitySelect } from '@/lib/scope'
 import { loadProjectBudget } from '@/lib/budget.server'
 import { loadBudgetVsActual } from '@/lib/actuals.server'
+import { loadProjectMoney } from '@/lib/money.server'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,7 +24,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
   })
   if (!project) notFound()
 
-  const [assets, catalog, budget, variance] = await Promise.all([
+  const [assets, catalog, budget, variance, money] = await Promise.all([
     prisma.asset.findMany({
       where: { projectId: project.id },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
@@ -38,6 +40,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
     }),
     loadProjectBudget(project.id),
     loadBudgetVsActual(project.id),
+    loadProjectMoney(project.id),
   ])
 
   const serialized: ScopeAssetData[] = assets.map((a) => ({
@@ -68,6 +71,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
         catalogOptions={catalogOptions}
       />
 
+      {money && <CostBudgetPanel money={money} />}
       {variance && <VariancePanel data={variance} />}
       {budget && <BudgetPanel budget={budget} />}
     </div>

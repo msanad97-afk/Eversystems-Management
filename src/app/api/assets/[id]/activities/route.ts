@@ -82,23 +82,29 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const name = isNonEmptyString(body?.name) ? body.name.trim() : null
   if (!name) return NextResponse.json({ error: 'Activity name is required.' }, { status: 400 })
 
-  let data: { type: 'MEASURED' | 'LUMPSUM'; unit: string | null; boqQuantity: number; lumpsumBhd: number | null }
+  let data: { type: 'MEASURED' | 'LUMPSUM'; unit: string | null; boqQuantity: number; lumpsumBhd: number | null; lumpsumBillBhd: number | null }
   if (type === 'LUMPSUM') {
     const lumpsumBhd = parsePositive(body.lumpsumBhd)
-    if (lumpsumBhd === null) return NextResponse.json({ error: 'A lumpsum activity needs a BHD amount greater than 0.' }, { status: 400 })
-    data = { type, unit: null, boqQuantity: 0, lumpsumBhd }
+    if (lumpsumBhd === null) return NextResponse.json({ error: 'A lumpsum activity needs a BHD cost amount greater than 0.' }, { status: 400 })
+    // Optional contract value; null → bill falls back to cost when derived.
+    const bill = body.lumpsumBillBhd === undefined || body.lumpsumBillBhd === null || body.lumpsumBillBhd === '' ? null : parsePositive(body.lumpsumBillBhd)
+    if (body.lumpsumBillBhd !== undefined && body.lumpsumBillBhd !== null && body.lumpsumBillBhd !== '' && bill === null) {
+      return NextResponse.json({ error: 'The lumpsum contract value must be greater than 0.' }, { status: 400 })
+    }
+    data = { type, unit: null, boqQuantity: 0, lumpsumBhd, lumpsumBillBhd: bill }
   } else {
     const unit = isNonEmptyString(body?.unit) ? body.unit.trim() : null
     const boq = parsePositive(body?.boqQuantity)
     if (!unit || boq === null) return NextResponse.json({ error: 'A measured activity needs a unit and a BOQ quantity greater than 0.' }, { status: 400 })
-    data = { type, unit, boqQuantity: boq, lumpsumBhd: null }
+    data = { type, unit, boqQuantity: boq, lumpsumBhd: null, lumpsumBillBhd: null }
   }
 
   const activity = await prisma.activity.create({
     data: {
       assetId: asset.id, name, ref, sortOrder: count, ...data,
+      pricedAt: new Date(),
       // One-off lines have no named sub-activities → carry a single implicit sub.
-      subActivities: { create: [implicitSubActivityCreate(data.type, data.lumpsumBhd)] },
+      subActivities: { create: [implicitSubActivityCreate(data.type, data.lumpsumBhd, data.lumpsumBillBhd)] },
     },
     select: scopeActivitySelect,
   })
