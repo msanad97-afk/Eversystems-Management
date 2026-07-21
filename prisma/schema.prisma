@@ -80,6 +80,7 @@ enum AuditAction {
   EXPENSE_UPDATED
   EXPENSE_DELETED
   REPORT_COST_BACKFILLED
+  BASELINE_UPDATED
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -539,15 +540,19 @@ enum CashCategory {
   OTHER_OUT
 }
 
+// Phase 6C: the project baseline S-curve — the ONE manager-entered plan in the system.
+// Stored as CUMULATIVE percent of BAC by month-end on the 0–100 scale (house convention),
+// not frozen currency, so PV re-prices cleanly when BAC changes — no re-baseline ritual.
+// The audit log (BASELINE_UPDATED) is the provenance record; no per-row createdBy/At.
 model BaselinePeriod {
-  id          String   @id @default(cuid())
-  projectId   String
-  periodMonth DateTime @db.Date
-  plannedPct  Decimal  @db.Decimal(6, 3)
+  id            String   @id @default(cuid())
+  projectId     String
+  periodMonth   DateTime @db.Date // first day of the month, UTC-normalised
+  cumPlannedPct Decimal  @db.Decimal(6, 3) // cumulative % of BAC by month-end, 0–100
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  @@unique([projectId, periodMonth])
+  @@unique([projectId, periodMonth]) // also serves the ordered read
 }
 
 model Valuation {

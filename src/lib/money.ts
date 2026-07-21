@@ -115,6 +115,41 @@ export interface ProjectMoney {
 
 // ─── Derivation ──────────────────────────────────────────────────────────────
 
+/**
+ * Phase 6C: the per-SUB-ACTIVITY form of the activity cost build-up above — the budgeted
+ * value BV_i that Earned Value is measured against. Additive: `deriveActivityMoney` is
+ * untouched, and Σ of these equals its `costBudget` (the roll-up invariant EVM relies on).
+ *
+ * Measured sub  = Σ(hoursPerUnit × parent BOQ × frozen rate) + Σ(qtyPerUnit × parent BOQ × frozen rate)
+ * Lumpsum sub   = lumpsumBhd
+ * Bare activity = costRate × BOQ, attributed to its measured sub(s). A bare measured
+ *                 activity carries exactly one (implicit) sub, so this is a 1:1 mapping;
+ *                 the equal split is a safety net for the impossible multi-sub case.
+ * Unpriced resources contribute 0 — they are already flagged by 6A/6B and understate BV.
+ */
+export function deriveSubActivityBudgets(
+  a: MoneyActivity,
+): { subActivityId: string; type: 'MEASURED' | 'LUMPSUM'; bv: number }[] {
+  const measuredSubs = a.subActivities.filter((s) => s.type === 'MEASURED')
+  const hasBuildUp = measuredSubs.some((s) => s.manpower.length > 0 || s.materials.length > 0)
+  const fallbackPerSub =
+    !hasBuildUp && a.type === 'MEASURED' && a.costRate != null && measuredSubs.length > 0
+      ? (a.costRate * a.boqQuantity) / measuredSubs.length
+      : 0
+
+  return a.subActivities.map((s) => {
+    if (s.type === 'LUMPSUM') return { subActivityId: s.id, type: s.type, bv: round(s.lumpsumBhd ?? 0, MONEY_DP) }
+    let bv = 0
+    if (hasBuildUp) {
+      for (const m of s.manpower) if (m.costRateAtPlacement != null) bv += m.hoursPerUnit * a.boqQuantity * m.costRateAtPlacement
+      for (const m of s.materials) if (m.costRateAtPlacement != null) bv += m.qtyPerUnit * a.boqQuantity * m.costRateAtPlacement
+    } else {
+      bv = fallbackPerSub
+    }
+    return { subActivityId: s.id, type: s.type, bv: round(bv, MONEY_DP) }
+  })
+}
+
 export function deriveActivityMoney(a: MoneyActivity): ActivityMoney {
   const unpriced: UnpricedResource[] = []
   const flag = (kind: UnpricedKind, resourceId: string | null, resourceName: string) =>

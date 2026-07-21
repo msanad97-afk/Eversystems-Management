@@ -61,11 +61,21 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
         <Link href="/admin/projects" className="text-sm font-medium text-primary hover:underline">
           ← Projects
         </Link>
-        <h1 className="mt-1 text-xl font-semibold text-fg">{project.name}</h1>
-        <p className="mono text-sm text-fg-subtle">
-          {project.projectCode}
-          {project.location ? ` · ${project.location}` : ''}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h1 className="text-xl font-semibold text-fg">{project.name}</h1>
+            <p className="mono text-sm text-fg-subtle">
+              {project.projectCode}
+              {project.location ? ` · ${project.location}` : ''}
+            </p>
+          </div>
+          <Link
+            href={`/admin/projects/${project.id}/performance`}
+            className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-muted"
+          >
+            Performance (EVM) →
+          </Link>
+        </div>
       </div>
 
       <ScopeManager
