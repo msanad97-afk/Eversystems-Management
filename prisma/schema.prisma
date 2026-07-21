@@ -81,6 +81,11 @@ enum AuditAction {
   EXPENSE_DELETED
   REPORT_COST_BACKFILLED
   BASELINE_UPDATED
+  VALUATION_CREATED
+  VALUATION_UPDATED
+  VALUATION_SUBMITTED
+  VALUATION_CERTIFIED
+  VALUATION_REISSUED
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -129,6 +134,9 @@ model Project {
   currency         String    @default("BHD")
   budgetCost       Decimal?  @db.Decimal(18, 3)
   retentionPct     Decimal?  @db.Decimal(5, 2)
+  // Phase 6D: retention stops accruing once held retention reaches this % of contract value.
+  // Null = uncapped (retentionPct applies to cumulative gross without limit).
+  retentionCapPct  Decimal?  @db.Decimal(5, 2)
   advancePct       Decimal?  @db.Decimal(5, 2)
   paymentTermsDays Int?      @default(45)
   plannedStart     DateTime? @db.Date
@@ -294,6 +302,12 @@ model Asset {
   sortOrder   Int      @default(0)
   isActive    Boolean  @default(true) // soft-deactivate; history preserved
   createdAt   DateTime @default(now())
+
+  // Phase 6D: the client bill value for this asset's LUMP-SUM scope. Lump-sum activities are
+  // costs with no rate and no quantity, so they cannot bill bottom-up like measured lines —
+  // this is the only revenue path they have. Null = "no lump-sum billing agreed yet": the
+  // lump-sum stream certifies at 0 and the certify gate blocks.
+  lumpsumRevenue Decimal? @db.Decimal(18, 3)
 
   project    Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   activities Activity[]
@@ -555,17 +569,38 @@ model BaselinePeriod {
   @@unique([projectId, periodMonth]) // also serves the ordered read
 }
 
+// Phase 6D: an interim payment certificate (IPC) — one per project per month, cumulative
+// minus previous. A month can carry several REVISIONS over time (a client can require changes
+// to a certificate they already approved); exactly one is LIVE (supersededAt null) and every
+// superseded revision stays frozen and readable as the record of what was approved.
 model Valuation {
-  id              String          @id @default(cuid())
-  valuationCode   String          @unique
-  projectId       String
-  periodMonth     DateTime        @db.Date
-  progressPct     Decimal         @db.Decimal(6, 3)
-  grossAmount     Decimal         @db.Decimal(18, 3)
-  previousGross   Decimal         @db.Decimal(18, 3)
-  retentionHeld   Decimal         @db.Decimal(18, 3)
-  advanceRecovery Decimal         @db.Decimal(18, 3)
-  netPayable      Decimal         @db.Decimal(18, 3)
+  id            String   @id @default(cuid())
+  valuationCode String   @unique // VAL-2026-0001, then VAL-2026-0001-r1, -r2 … per revision
+  projectId     String
+  periodMonth   DateTime @db.Date
+
+  // Money — RECOMPUTED on every DRAFT edit, FROZEN at certify.
+  progressPct        Decimal @db.Decimal(6, 3) // derived display: cumulativeGross ÷ contract value
+  cumulativeMeasured Decimal @db.Decimal(18, 3)
+  cumulativeLumpsum  Decimal @db.Decimal(18, 3)
+  grossAmount        Decimal @db.Decimal(18, 3) // cumulative gross to date
+  previousGross      Decimal @db.Decimal(18, 3) // prior period's certified cumulative gross
+  retentionHeld      Decimal @db.Decimal(18, 3) // cumulative retention held to date
+  advanceRecovery    Decimal @db.Decimal(18, 3) // recovered THIS period
+  netPayable         Decimal @db.Decimal(18, 3) // net payable THIS period
+
+  // Certify-time PARAMETER snapshots — nullable, set only at certify. A DRAFT has no
+  // certified parameters, so a non-null value here would be a lie.
+  contractValueAtCert Decimal? @db.Decimal(18, 3)
+  retentionPctAtCert  Decimal? @db.Decimal(5, 2)
+  advancePctAtCert    Decimal? @db.Decimal(5, 2)
+
+  // Revisions. supersededAt null = the live revision. The one-live-revision-per-month
+  // invariant is enforced in the create check and the re-issue transaction — deliberately NOT
+  // a partial unique index, which Prisma cannot express and `migrate diff` would silently drop.
+  revisionNumber Int       @default(0)
+  supersededAt   DateTime?
+
   status          ValuationStatus @default(DRAFT)
   certifiedAt     DateTime?
   expectedReceipt DateTime?       @db.Date
@@ -574,9 +609,29 @@ model Valuation {
   createdBy       String
 
   project  Project           @relation(fields: [projectId], references: [id])
+  lines    ValuationLine[]
   receipts CashTransaction[]
 
-  @@unique([projectId, periodMonth])
+  @@unique([projectId, periodMonth, revisionNumber])
+  @@index([projectId, periodMonth])
+}
+
+// Per-asset detail for one valuation revision. Written for a DRAFT (recomputed on edit) and
+// frozen at certify. Stores cumulative-to-date; "this period" per asset = this line minus the
+// matching line on the prior certified valuation.
+model ValuationLine {
+  id                 String  @id @default(cuid())
+  valuationId        String
+  assetId            String // provenance only; never a live read after certify
+  assetName          String // frozen label — survives an asset rename or soft-delete
+  cumulativeMeasured Decimal @db.Decimal(18, 3)
+  cumulativeLumpsum  Decimal @db.Decimal(18, 3)
+  cumulativeGross    Decimal @db.Decimal(18, 3)
+  sortOrder          Int     @default(0)
+
+  valuation Valuation @relation(fields: [valuationId], references: [id], onDelete: Cascade)
+
+  @@index([valuationId])
 }
 
 model Expense {

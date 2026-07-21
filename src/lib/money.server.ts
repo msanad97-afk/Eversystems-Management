@@ -134,7 +134,7 @@ export async function loadProjectMoney(projectId: string): Promise<ProjectMoney 
     where: { projectId, isActive: true },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     select: {
-      id: true, name: true,
+      id: true, name: true, lumpsumRevenue: true,
       activities: { where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }], select: activitySelect },
     },
   })
@@ -145,6 +145,7 @@ export async function loadProjectMoney(projectId: string): Promise<ProjectMoney 
     assets.map((asset) => ({
       assetId: asset.id,
       assetName: asset.name,
+      lumpsumRevenue: n(asset.lumpsumRevenue),
       activities: asset.activities.map((a) => toInput(a as unknown as Loaded)),
     })),
     { budgetCost: n(project.budgetCost), contractValue: n(project.contractValue) },

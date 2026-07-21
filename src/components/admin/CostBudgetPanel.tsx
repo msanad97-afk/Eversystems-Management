@@ -2,6 +2,7 @@ import type { ProjectMoney, CostSource } from '@/lib/money'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/Table'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { LumpsumRevenueInput } from '@/components/admin/LumpsumRevenueInput'
 
 function bhd(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })
@@ -90,7 +91,7 @@ export function CostBudgetPanel({ money }: { money: ProjectMoney }) {
           {money.margin < 0 && money.contractValue === 0 && money.bac > 0 && (
             <p className="text-xs text-fg-subtle">
               Margin is negative because this scope carries cost but no contract value yet. Set a bill rate on the measured
-              activities to record the revenue side.
+              activities, and a lump-sum revenue on any asset with lump-sum scope, to record the revenue side.
             </p>
           )}
 
@@ -103,6 +104,10 @@ export function CostBudgetPanel({ money }: { money: ProjectMoney }) {
                     cost {bhd(asset.costBudget)} · value {bhd(asset.contractValue)}
                   </p>
                 </div>
+                {/* Only assets that actually carry lumpsum cost have anything to bill this way. */}
+                {asset.activities.some((a) => a.costSource === 'LUMPSUM' || a.costSource === 'MIXED') && (
+                  <LumpsumRevenueInput assetId={asset.assetId} value={asset.lumpsumRevenue} contractValue={asset.contractValue} />
+                )}
                 <Table>
                   <THead>
                     <TR>

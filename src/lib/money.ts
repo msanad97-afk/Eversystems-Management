@@ -10,13 +10,14 @@ import { round } from '@/lib/budget'
  *   BAC = Σ measured cost + Σ lumpsum cost  ← the single BHD budget Rev 2 deferred to Phase 6.
  *
  * CONTRACT value (revenue):
- *   - measured = Activity.billRate × BOQ
- *   - lumpsum  = NOTHING. A lumpsum is a cost to complete the activity, never revenue;
- *     billing happens at asset/project level, not on an activity line.
+ *   - measured = Activity.billRate × BOQ                      (activity level)
+ *   - lumpsum  = NOTHING on the line. A lumpsum is a cost to complete the activity, never
+ *     revenue; billing happens at asset level via Asset.lumpsumRevenue (Phase 6D), which is
+ *     folded in by `deriveAssetMoney`.
  *
  * A consequence worth stating plainly: a project carrying lumpsum costs with no bill rates
- * set shows a NEGATIVE margin. That is the correct reading — real cost, no revenue recorded
- * against it yet — not a defect.
+ * and no agreed lumpsum revenue shows a NEGATIVE margin. That is the correct reading — real
+ * cost, no revenue recorded against it yet — not a defect.
  *
  * Cost rates are the ones FROZEN onto the budget rows at placement, never the live global
  * catalog rates — so editing a global rate can't re-price a placed project.
@@ -92,6 +93,9 @@ export interface AssetMoney {
   assetName: string
   activities: ActivityMoney[]
   costBudget: number
+  /** Phase 6D: the client bill value for this asset's lump-sum scope. Null = not agreed yet. */
+  lumpsumRevenue: number | null
+  /** Σ measured (billRate × BOQ) + lumpsumRevenue. */
   contractValue: number
   margin: number
 }
@@ -211,20 +215,31 @@ export function deriveActivityMoney(a: MoneyActivity): ActivityMoney {
   }
 }
 
-export function deriveAssetMoney(assetId: string, assetName: string, activities: MoneyActivity[]): AssetMoney {
+/**
+ * Phase 6D (additive): an asset's lump-sum scope earns revenue through ONE stored figure,
+ * `Asset.lumpsumRevenue`, because a lumpsum line carries no rate and no quantity to bill
+ * bottom-up. It is folded in here at asset level — the activity derivation above is
+ * deliberately untouched, so `billRate` stays the only line-level source of revenue.
+ */
+export function deriveAssetMoney(
+  assetId: string,
+  assetName: string,
+  activities: MoneyActivity[],
+  lumpsumRevenue: number | null = null,
+): AssetMoney {
   const derived = activities.map(deriveActivityMoney)
   const costBudget = round(derived.reduce((s, a) => s + a.costBudget, 0), MONEY_DP)
-  const contractValue = round(derived.reduce((s, a) => s + a.contractValue, 0), MONEY_DP)
-  return { assetId, assetName, activities: derived, costBudget, contractValue, margin: round(contractValue - costBudget, MONEY_DP) }
+  const contractValue = round(derived.reduce((s, a) => s + a.contractValue, 0) + (lumpsumRevenue ?? 0), MONEY_DP)
+  return { assetId, assetName, activities: derived, costBudget, lumpsumRevenue, contractValue, margin: round(contractValue - costBudget, MONEY_DP) }
 }
 
 export function deriveProjectMoney(
   projectId: string,
   projectName: string,
-  assets: { assetId: string; assetName: string; activities: MoneyActivity[] }[],
+  assets: { assetId: string; assetName: string; activities: MoneyActivity[]; lumpsumRevenue?: number | null }[],
   header: { budgetCost: number | null; contractValue: number | null },
 ): ProjectMoney {
-  const derived = assets.map((a) => deriveAssetMoney(a.assetId, a.assetName, a.activities))
+  const derived = assets.map((a) => deriveAssetMoney(a.assetId, a.assetName, a.activities, a.lumpsumRevenue ?? null))
   const bac = round(derived.reduce((s, a) => s + a.costBudget, 0), MONEY_DP)
   const contractValue = round(derived.reduce((s, a) => s + a.contractValue, 0), MONEY_DP)
   const margin = round(contractValue - bac, MONEY_DP)

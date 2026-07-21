@@ -56,7 +56,7 @@ export interface ActivityEvmLevel {
 
 const utcDay = (d: Date) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
 
-interface SubRow {
+export interface SubRow {
   subActivityId: string
   activityId: string
   assetId: string
@@ -66,10 +66,16 @@ interface SubRow {
   bv: number
   type: 'MEASURED' | 'LUMPSUM'
   plannedQty: number
+  /** 6D reads the bill side off the same load; 6C ignores it. */
+  billRate: number | null
 }
 
-/** BV per sub-activity + the asset/activity tree, from the 6A money model. */
-async function loadScope(projectId: string): Promise<{ subs: SubRow[]; assetOrder: { id: string; name: string }[] }> {
+/**
+ * BV per sub-activity + the asset/activity tree, from the 6A money model.
+ * Exported so Phase 6D certifies revenue off the exact same scope and EV/BV the cost side
+ * uses — one path, so the two can never drift apart.
+ */
+export async function loadScope(projectId: string): Promise<{ subs: SubRow[]; assetOrder: { id: string; name: string }[] }> {
   const assets = await prisma.asset.findMany({
     where: { projectId, isActive: true },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
@@ -130,6 +136,7 @@ async function loadScope(projectId: string): Promise<{ subs: SubRow[]; assetOrde
           bv: bvRow.bv,
           type: bvRow.type,
           plannedQty: Number(a.boqQuantity),
+          billRate: a.billRate == null ? null : Number(a.billRate),
         })
       }
     }
@@ -137,7 +144,7 @@ async function loadScope(projectId: string): Promise<{ subs: SubRow[]; assetOrde
   return { subs, assetOrder: assets.map((a) => ({ id: a.id, name: a.name })) }
 }
 
-interface ProgressRow {
+export interface ProgressRow {
   subActivityId: string
   reportDate: Date
   quantityDone: number | null
@@ -146,7 +153,7 @@ interface ProgressRow {
 }
 
 /** Approved progress + snapshot cost, dated by reportDate. One query. */
-async function loadApprovedProgress(projectId: string, asOf: Date): Promise<ProgressRow[]> {
+export async function loadApprovedProgress(projectId: string, asOf: Date): Promise<ProgressRow[]> {
   const rows = await prisma.reportSubActivity.findMany({
     where: {
       reportActivity: { report: { projectId, status: 'APPROVED', reportDate: { lte: asOf } } },
@@ -174,7 +181,7 @@ async function loadApprovedProgress(projectId: string, asOf: Date): Promise<Prog
 }
 
 /** EV and AC per sub-activity as of a cut-off, from already-loaded rows. */
-function evAcAsOf(subs: SubRow[], progress: ProgressRow[], cutoff: Date) {
+export function evAcAsOf(subs: SubRow[], progress: ProgressRow[], cutoff: Date) {
   const qty = new Map<string, number>()
   const latestPct = new Map<string, { at: number; pct: number }>()
   const ac = new Map<string, number>()

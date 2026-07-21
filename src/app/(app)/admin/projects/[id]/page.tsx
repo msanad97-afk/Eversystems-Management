@@ -69,12 +69,20 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
               {project.location ? ` · ${project.location}` : ''}
             </p>
           </div>
-          <Link
-            href={`/admin/projects/${project.id}/performance`}
-            className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-muted"
-          >
-            Performance (EVM) →
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href={`/admin/projects/${project.id}/valuations`}
+              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-muted"
+            >
+              Valuations →
+            </Link>
+            <Link
+              href={`/admin/projects/${project.id}/performance`}
+              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-muted"
+            >
+              Performance (EVM) →
+            </Link>
+          </div>
         </div>
       </div>
 
