@@ -141,28 +141,89 @@ export interface ForecastMonth {
   projectedInflow: number
 }
 
-/**
- * Monthly projected inflow over the next `months` months starting at `fromMonth` (a YYYY-MM-01
- * key). An outstanding amount whose expected receipt is in the past — or has no due date — is
- * expected NOW, so it lands in the first bucket. There is no outflow side by design.
- */
-export function forecastInflows(inflows: ForecastInflow[], fromMonth: string, months: number): ForecastMonth[] {
+/** The month keys for a forecast window: `months` consecutive months from `fromMonth`. */
+function windowKeys(fromMonth: string, months: number): string[] {
   const start = new Date(`${fromMonth}T00:00:00.000Z`)
   const keys: string[] = []
   for (let i = 0; i < months; i++) {
     keys.push(monthKeyOf(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i, 1))))
   }
+  return keys
+}
+
+/**
+ * Bucket dated, outstanding amounts into a forecast window. A null date — or a date before the
+ * window (overdue) — is expected NOW and lands in the first bucket; amounts beyond the horizon
+ * are dropped. Non-positive amounts contribute nothing. Shared by the inflow and outflow sides
+ * so they follow exactly the same rule.
+ */
+function bucketByMonth(items: { date: Date | null; amount: number }[], keys: string[]): Map<string, number> {
   const firstKey = keys[0]!
   const lastKey = keys[keys.length - 1]!
   const byMonth = new Map<string, number>(keys.map((k) => [k, 0]))
-
-  for (const f of inflows) {
-    if (f.outstanding <= 0) continue
-    // No due date, or already due, or before the window → expected now (first bucket).
-    let key = f.expectedReceipt == null ? firstKey : monthKeyOf(f.expectedReceipt)
+  for (const it of items) {
+    if (it.amount <= 0) continue
+    let key = it.date == null ? firstKey : monthKeyOf(it.date)
     if (key < firstKey) key = firstKey
-    if (key > lastKey) continue // beyond the forecast horizon
-    byMonth.set(key, round((byMonth.get(key) ?? 0) + f.outstanding, MONEY_DP))
+    if (key > lastKey) continue
+    byMonth.set(key, round((byMonth.get(key) ?? 0) + it.amount, MONEY_DP))
   }
+  return byMonth
+}
+
+/**
+ * Monthly projected inflow (Phase 6E, inflow-only). Kept as-is so its callers and tests are
+ * unchanged; the combined Phase 7 builder below reuses the same bucketing rule.
+ */
+export function forecastInflows(inflows: ForecastInflow[], fromMonth: string, months: number): ForecastMonth[] {
+  const keys = windowKeys(fromMonth, months)
+  const byMonth = bucketByMonth(inflows.map((f) => ({ date: f.expectedReceipt, amount: f.outstanding })), keys)
   return keys.map((month) => ({ month, projectedInflow: round(byMonth.get(month) ?? 0, MONEY_DP) }))
+}
+
+// ─── Phase 7: inflow + outflow + net + running balance ─────────────────────────
+
+export interface ForecastOutflow {
+  dueDate: Date | null
+  outstanding: number
+}
+export interface ForecastRow {
+  month: string // YYYY-MM-01
+  projectedInflow: number
+  projectedOutflow: number
+  projectedNet: number // inflow − outflow
+  runningBalance: number // clearedBalance + Σ net to date
+}
+
+/**
+ * The full monthly forecast: inflows from receivables, outflows from dated expense payables,
+ * their net, and the running balance carried from `clearedBalance`. Outflows with a null due
+ * date are NOT here — they are the caller's "unscheduled payables", reported separately so a
+ * month is never silently inflated. Overdue inflows and outflows both land in the first month.
+ */
+export function buildForecast(
+  inflows: ForecastInflow[],
+  outflows: ForecastOutflow[],
+  clearedBalance: number,
+  fromMonth: string,
+  months: number,
+): ForecastRow[] {
+  const keys = windowKeys(fromMonth, months)
+  const inByMonth = bucketByMonth(inflows.map((f) => ({ date: f.expectedReceipt, amount: f.outstanding })), keys)
+  // A null-dueDate outflow is unscheduled → excluded here (bucketByMonth would put it in month 1).
+  const outByMonth = bucketByMonth(outflows.filter((o) => o.dueDate != null).map((o) => ({ date: o.dueDate, amount: o.outstanding })), keys)
+
+  let running = round(clearedBalance, MONEY_DP)
+  return keys.map((month) => {
+    const projectedInflow = round(inByMonth.get(month) ?? 0, MONEY_DP)
+    const projectedOutflow = round(outByMonth.get(month) ?? 0, MONEY_DP)
+    const projectedNet = round(projectedInflow - projectedOutflow, MONEY_DP)
+    running = round(running + projectedNet, MONEY_DP)
+    return { month, projectedInflow, projectedOutflow, projectedNet, runningBalance: running }
+  })
+}
+
+/** Σ outstanding of payables with NO due date — reported beside the forecast, never bucketed. */
+export function unscheduledPayables(outflows: ForecastOutflow[]): number {
+  return round(outflows.filter((o) => o.dueDate == null && o.outstanding > 0).reduce((s, o) => s + o.outstanding, 0), MONEY_DP)
 }

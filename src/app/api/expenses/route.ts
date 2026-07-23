@@ -33,6 +33,13 @@ export async function POST(req: NextRequest) {
   if (!expenseDate) return NextResponse.json({ error: 'A valid expense date is required.' }, { status: 400 })
   if (!isExpenseCategory(body?.category)) return NextResponse.json({ error: 'A valid category is required.' }, { status: 400 })
 
+  // Phase 7: optional due date (when payable). Null = unscheduled — honest ignorance, not "due now".
+  let dueDate: Date | null = null
+  if (body?.dueDate != null && body.dueDate !== '') {
+    dueDate = parseDate(body.dueDate)
+    if (!dueDate) return NextResponse.json({ error: 'dueDate must be a valid date (YYYY-MM-DD) or empty.' }, { status: 400 })
+  }
+
   // projectId is optional: null = company-level overhead (never enters a project's AC).
   const projectId = isNonEmptyString(body?.projectId) ? body.projectId : null
   if (projectId && !(await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } }))) {
@@ -41,7 +48,7 @@ export async function POST(req: NextRequest) {
 
   const created = await prisma.expense.create({
     data: {
-      description, amount, expenseDate, category: body.category, projectId,
+      description, amount, expenseDate, dueDate, category: body.category, projectId,
       vendor: isNonEmptyString(body?.vendor) ? body.vendor.trim() : null,
       createdBy: guard.user.id,
     },
@@ -54,7 +61,7 @@ export async function POST(req: NextRequest) {
     projectId,
     entity: 'Expense',
     entityId: created.id,
-    metadata: { category: body.category, amount, description },
+    metadata: { category: body.category, amount, description, dueDate: dueDate ? dueDate.toISOString().slice(0, 10) : null },
     ipAddress: getClientIp(req),
   })
 

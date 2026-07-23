@@ -13,6 +13,7 @@ export interface NavItem {
  */
 export const SIDEBAR_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/admin', roles: ['ADMIN'] },
+  { label: 'Executive', href: '/admin/executive', roles: ['ADMIN'] },
   { label: 'Review', href: '/admin/review', roles: ['ADMIN'] },
   { label: 'Reports', href: '/admin/reports', roles: ['ADMIN', 'VIEWER'] },
   { label: 'Users', href: '/admin/users', roles: ['ADMIN'] },

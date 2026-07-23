@@ -41,6 +41,7 @@ export function ExpensesManager({ projectId, initial }: { projectId: string; ini
   const [vendor, setVendor] = useState('')
   const [amount, setAmount] = useState('')
   const [expenseDate, setExpenseDate] = useState(new Date().toISOString().slice(0, 10))
+  const [dueDate, setDueDate] = useState('')
 
   const valid = description.trim() !== '' && Number(amount) > 0 && expenseDate !== ''
 
@@ -51,11 +52,11 @@ export function ExpensesManager({ projectId, initial }: { projectId: string; ini
       const res = await fetch('/api/expenses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, category, description: description.trim(), vendor: vendor.trim() || null, amount: Number(amount), expenseDate }),
+        body: JSON.stringify({ projectId, category, description: description.trim(), vendor: vendor.trim() || null, amount: Number(amount), expenseDate, dueDate: dueDate || null }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error ?? 'Could not save.')
-      setDescription(''); setVendor(''); setAmount('')
+      setDescription(''); setVendor(''); setAmount(''); setDueDate('')
       router.refresh()
       showToast(data.expense?.eligible ? 'Expense added to actual cost.' : 'Expense saved — excluded from actual cost.', 'success')
     } catch (err) {
@@ -95,9 +96,11 @@ export function ExpensesManager({ projectId, initial }: { projectId: string; ini
           <div className="min-w-[30%] flex-1"><Input label="Description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Blockwork subcontract — Nov" /></div>
           <div className="w-36"><Input label="Vendor (optional)" value={vendor} onChange={(e) => setVendor(e.target.value)} /></div>
           <div className="w-32"><Input label="Amount (BHD)" type="number" inputMode="decimal" min={0} step="any" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
-          <div className="w-40"><Input label="Date" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} /></div>
+          <div className="w-40"><Input label="Date incurred" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} /></div>
+          <div className="w-40"><Input label="Due date (optional)" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></div>
           <Button onClick={add} loading={busy} disabled={!valid}>Add</Button>
         </div>
+        <p className="text-xs text-fg-subtle">Due date drives the cash forecast; blank means <span className="font-medium">unscheduled</span> — outstanding but not placed in any forecast month.</p>
         {EXCLUDED_HINT[category] && (
           <p className="text-xs font-medium text-warning">{EXCLUDED_HINT[category]}</p>
         )}

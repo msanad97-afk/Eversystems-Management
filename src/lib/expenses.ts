@@ -11,6 +11,7 @@ export interface ExpenseRow {
   description: string
   vendor: string | null
   expenseDate: Date
+  dueDate: Date | null
   amount: unknown
   projectId: string | null
   project?: { name: string } | null
@@ -22,6 +23,7 @@ export const expenseSelect = {
   description: true,
   vendor: true,
   expenseDate: true,
+  dueDate: true,
   amount: true,
   projectId: true,
   project: { select: { name: true } },
@@ -35,6 +37,7 @@ export function serializeExpense(e: ExpenseRow) {
     description: e.description,
     vendor: e.vendor,
     expenseDate: e.expenseDate.toISOString().slice(0, 10),
+    dueDate: e.dueDate ? e.dueDate.toISOString().slice(0, 10) : null,
     amount: Number(e.amount),
     projectId: e.projectId,
     projectName: e.project?.name ?? null,

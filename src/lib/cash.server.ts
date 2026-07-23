@@ -5,8 +5,8 @@ import { MONEY_DP } from '@/lib/evm'
 import { loadProjectMoney } from '@/lib/money.server'
 import { loadCertifiedRevisionsByPeriod } from '@/lib/valuation.server'
 import {
-  accountBalances, sumBalances, directionFor, paymentState, ageBucket, forecastInflows, monthKeyOf,
-  type AccountBalances, type PaymentState, type AgeBucket, type ForecastInflow,
+  accountBalances, sumBalances, directionFor, paymentState, ageBucket, buildForecast, unscheduledPayables, monthKeyOf,
+  type AccountBalances, type PaymentState, type AgeBucket, type ForecastInflow, type ForecastOutflow, type ForecastRow,
 } from '@/lib/cash'
 
 const n = (v: unknown): number => (v == null ? 0 : Number(v))
@@ -146,23 +146,42 @@ export async function loadReceivables(opts: { projectId?: string; today: Date })
 // ─── Forecast (inflows only) ────────────────────────────────────────────────────
 
 export interface CashForecast {
-  months: { month: string; projectedInflow: number }[]
+  months: ForecastRow[] // Phase 7: inflow + outflow + net + running balance per month
   clearedBalance: number
-  // No outflow field — expenses have no due date, so outflows are not forecast (§6E.5).
+  unscheduledPayables: number // Σ outstanding of payables with NO due date — reported separately
+}
+
+/**
+ * Outstanding expense payables: amount − Σ matched payments (the 6E `expenseId` FK). Fully-paid
+ * expenses (outstanding ≤ 0) drop out. `dueDate` is the cash-timing field; a null due date is
+ * unscheduled and handled by the forecast builder / `unscheduledPayables`, never bucketed.
+ */
+async function loadExpensePayables(): Promise<ForecastOutflow[]> {
+  const expenses = await prisma.expense.findMany({
+    select: { amount: true, dueDate: true, payments: { where: { direction: 'OUT' }, select: { amount: true } } },
+  })
+  return expenses
+    .map((e) => {
+      const paid = e.payments.reduce((s, p) => s + n(p.amount), 0)
+      return { dueDate: e.dueDate, outstanding: round(n(e.amount) - paid, MONEY_DP) }
+    })
+    .filter((o) => o.outstanding > 0)
 }
 
 export async function loadForecast(months: number, today: Date): Promise<CashForecast> {
-  const [receivables, position] = await Promise.all([
+  const [receivables, position, payables] = await Promise.all([
     loadReceivables({ today }),
     loadCashPosition(),
+    loadExpensePayables(),
   ])
   const inflows: ForecastInflow[] = receivables
     .filter((r) => r.outstanding > 0)
     .map((r) => ({ expectedReceipt: r.expectedReceipt ? new Date(`${r.expectedReceipt}T00:00:00.000Z`) : null, outstanding: r.outstanding }))
 
   return {
-    months: forecastInflows(inflows, monthKeyOf(today), months),
+    months: buildForecast(inflows, payables, position.totals.clearedBalance, monthKeyOf(today), months),
     clearedBalance: position.totals.clearedBalance,
+    unscheduledPayables: unscheduledPayables(payables),
   }
 }
 

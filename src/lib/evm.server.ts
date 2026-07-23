@@ -322,9 +322,17 @@ export async function loadActivityEvm(projectId: string, assetId: string, asOfIn
 
 // ─── Portfolio (ACTIVE projects only) ─────────────────────────────────────────
 
+export interface PortfolioRow {
+  projectId: string; projectCode: string; projectName: string
+  bac: number; pv: number | null; ev: number; ac: number
+  spi: number | null; cpi: number | null; eac: number; vac: number; pctComplete: number
+  // Phase 7: existing per-project figures forwarded for the executive dashboard (no new math).
+  contractValue: number; projectedMargin: number; expensesTotal: number
+  hasBaseline: boolean; unpricedCount: number; hasApproximations: boolean
+}
 export interface PortfolioEvm {
   asOf: string
-  projects: { projectId: string; projectCode: string; projectName: string; bac: number; pv: number | null; ev: number; ac: number; spi: number | null; cpi: number | null; eac: number; vac: number; pctComplete: number }[]
+  projects: PortfolioRow[]
   totals: { bac: number; pv: number; ev: number; ac: number; spi: number | null; cpi: number | null }
 }
 
@@ -337,14 +345,21 @@ export async function loadPortfolioEvm(asOfInput?: Date): Promise<PortfolioEvm> 
     select: { id: true, projectCode: true, name: true },
   })
 
-  const rows = []
+  // Phase 7 (§7.3): per-project EVM loads in parallel — this is the hot path on the busiest
+  // page. Purely a concurrency change; the roll-up arithmetic below is byte-for-byte unchanged.
+  const loaded = await Promise.all(projects.map((p) => loadProjectEvm(p.id, asOf)))
+
+  const rows: PortfolioRow[] = []
   let bac = 0, pvSum = 0, ev = 0, ac = 0
-  for (const p of projects) {
-    const e = await loadProjectEvm(p.id, asOf)
+  for (let i = 0; i < projects.length; i++) {
+    const p = projects[i]!
+    const e = loaded[i]
     if (!e) continue
     rows.push({
       projectId: p.id, projectCode: p.projectCode, projectName: p.name,
       bac: e.bac, pv: e.pv, ev: e.ev, ac: e.ac, spi: e.spi, cpi: e.cpi, eac: e.eac, vac: e.vac, pctComplete: e.pctComplete,
+      contractValue: e.contractValue, projectedMargin: e.projectedMargin, expensesTotal: e.expensesTotal,
+      hasBaseline: e.hasBaseline, unpricedCount: e.unpricedCount, hasApproximations: e.hasApproximations,
     })
     bac += e.bac
     ev += e.ev

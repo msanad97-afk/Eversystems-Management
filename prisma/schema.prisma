@@ -653,8 +653,12 @@ model Expense {
   category    ExpenseCategory
   description String
   vendor      String?
-  expenseDate DateTime        @db.Date
+  expenseDate DateTime        @db.Date // when the cost was INCURRED — feeds Actual Cost (6B), unchanged
   amount      Decimal         @db.Decimal(18, 3)
+  // Phase 7: when the expense is PAYABLE — a pure cash-timing field, distinct from expenseDate
+  // and never read by the AC path. Null = no agreed terms → "unscheduled payables", reported
+  // separately from the forecast buckets (never treated as due now).
+  dueDate     DateTime?       @db.Date
   createdAt   DateTime        @default(now())
   createdBy   String
 

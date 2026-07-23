@@ -11,7 +11,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const guard = await requireAdmin()
   if ('error' in guard) return guard.error
 
-  const existing = await prisma.expense.findUnique({ where: { id: params.id }, select: { id: true, projectId: true } })
+  const existing = await prisma.expense.findUnique({ where: { id: params.id }, select: { id: true, projectId: true, dueDate: true } })
   if (!existing) return NextResponse.json({ error: 'Expense not found.' }, { status: 404 })
 
   const body = await req.json().catch(() => null)
@@ -30,6 +30,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (!d) return NextResponse.json({ error: 'A valid expense date is required.' }, { status: 400 })
     data.expenseDate = d
   }
+  if ('dueDate' in body) {
+    // Null / empty clears it back to unscheduled.
+    if (body.dueDate == null || body.dueDate === '') data.dueDate = null
+    else {
+      const d = parseDate(body.dueDate)
+      if (!d) return NextResponse.json({ error: 'dueDate must be a valid date (YYYY-MM-DD) or empty.' }, { status: 400 })
+      data.dueDate = d
+    }
+  }
   if ('category' in body) {
     if (!isExpenseCategory(body.category)) return NextResponse.json({ error: 'A valid category is required.' }, { status: 400 })
     data.category = body.category
@@ -45,13 +54,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const updated = await prisma.expense.update({ where: { id: params.id }, data, select: expenseSelect })
 
+  const dayOf = (d: Date | null) => (d == null ? null : d.toISOString().slice(0, 10))
   writeAuditLog({
     action: 'EXPENSE_UPDATED',
     userId: guard.user.id,
     projectId: updated.projectId,
     entity: 'Expense',
     entityId: updated.id,
-    metadata: { fields: Object.keys(data) },
+    metadata: {
+      fields: Object.keys(data),
+      ...('dueDate' in data ? { dueDate: { from: dayOf(existing.dueDate), to: dayOf(data.dueDate as Date | null) } } : {}),
+    },
     ipAddress: getClientIp(req),
   })
 

@@ -109,33 +109,41 @@ export function ReceivablesTable({ rows, showProject }: { rows: ReceivableRow[];
 // ─── Inflow forecast ───────────────────────────────────────────────────────────
 
 export function ForecastPanel({ forecast }: { forecast: CashForecast }) {
-  const total = forecast.months.reduce((s, m) => s + m.projectedInflow, 0)
+  const totalIn = forecast.months.reduce((s, m) => s + m.projectedInflow, 0)
+  const totalOut = forecast.months.reduce((s, m) => s + m.projectedOutflow, 0)
+  // The single most useful number: the first month the running balance goes negative.
+  const goesNegative = forecast.months.find((m) => m.runningBalance < 0)
   return (
     <section className="space-y-2">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Inflow forecast</h2>
-      <div className="rounded-lg border border-warning bg-warning-bg px-4 py-2 text-xs text-warning">
-        Outflows are <span className="font-semibold">not forecast</span> — expenses have no payment terms in the system, so
-        a projected outflow would be invented. The figures below are the money expected <span className="font-semibold">in</span> only.
-      </div>
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Cash forecast</h2>
+      {goesNegative && (
+        <div className="rounded-lg border border-danger bg-danger-bg px-4 py-2 text-sm font-medium text-danger">
+          Projected cash goes negative in {monthLabel(goesNegative.month)} ({bhd(goesNegative.runningBalance)}).
+        </div>
+      )}
       <div className="overflow-x-auto rounded-lg border border-border bg-surface">
         <Table>
           <THead>
-            <TR><TH>Month</TH><TH className="text-right">Projected inflow</TH></TR>
+            <TR><TH>Month</TH><TH className="text-right">Inflow</TH><TH className="text-right">Outflow</TH><TH className="text-right">Net</TH><TH className="text-right">Running balance</TH></TR>
           </THead>
           <TBody>
             {forecast.months.map((m) => (
               <TR key={m.month}>
                 <TD>{monthLabel(m.month)}</TD>
-                <TD className="text-right tabular-nums">{bhd(m.projectedInflow)}</TD>
+                <TD className="text-right tabular-nums text-success">{bhd(m.projectedInflow)}</TD>
+                <TD className="text-right tabular-nums text-danger">{bhd(m.projectedOutflow)}</TD>
+                <TD className={`text-right tabular-nums ${m.projectedNet < 0 ? 'text-danger' : ''}`}>{bhd(m.projectedNet)}</TD>
+                <TD className={`text-right font-medium tabular-nums ${m.runningBalance < 0 ? 'text-danger' : 'text-fg'}`}>{bhd(m.runningBalance)}</TD>
               </TR>
             ))}
           </TBody>
         </Table>
       </div>
       <p className="text-sm text-fg-subtle">
-        Cleared balance {bhd(forecast.clearedBalance)} + projected inflows {bhd(total)} ={' '}
-        <span className="font-medium text-fg">{bhd(forecast.clearedBalance + total)}</span>{' '}
-        <span className="text-fg-muted">before outflows</span>.
+        Cleared {bhd(forecast.clearedBalance)} · projected in {bhd(totalIn)} · out {bhd(totalOut)}.
+        {forecast.unscheduledPayables > 0 && (
+          <> <span className="text-warning">Plus {bhd(forecast.unscheduledPayables)} of unscheduled payables</span> (expenses with no due date) — outstanding but not placed in any month.</>
+        )}
       </p>
     </section>
   )
