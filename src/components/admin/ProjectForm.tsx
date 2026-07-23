@@ -23,6 +23,9 @@ export interface ProjectFormFinancials {
   advancePct: string
   paymentTermsDays: string
   currency: string
+  practicalCompletionDate: string
+  defectsLiabilityMonths: string
+  retentionFirstReleasePct: string
 }
 
 export interface ProjectFormInitial {
@@ -48,6 +51,9 @@ export interface ProjectFormPayload {
   advancePct: number | null
   paymentTermsDays: number | null
   currency: string
+  practicalCompletionDate: string | null
+  defectsLiabilityMonths: number | null
+  retentionFirstReleasePct: number | null
 }
 
 /** '' → null; otherwise the numeric value (server re-validates the bounds). */
@@ -94,6 +100,10 @@ export function ProjectForm({
   // New projects prefill the 45-day default so it's visible; editing shows the stored value.
   const [paymentTermsDays, setPaymentTermsDays] = useState(fin?.paymentTermsDays ?? (mode === 'create' ? '45' : ''))
   const [currency, setCurrency] = useState(fin?.currency ?? (mode === 'create' ? 'BHD' : ''))
+  // Phase 8 retention-release terms; new projects prefill the defaults so they are visible.
+  const [practicalCompletionDate, setPracticalCompletionDate] = useState(fin?.practicalCompletionDate ?? '')
+  const [defectsLiabilityMonths, setDefectsLiabilityMonths] = useState(fin?.defectsLiabilityMonths ?? (mode === 'create' ? '12' : ''))
+  const [retentionFirstReleasePct, setRetentionFirstReleasePct] = useState(fin?.retentionFirstReleasePct ?? (mode === 'create' ? '50' : ''))
 
   function toggleMember(id: string) {
     setMemberIds((prev) => (prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]))
@@ -114,6 +124,9 @@ export function ProjectForm({
       advancePct: numOrNull(advancePct),
       paymentTermsDays: numOrNull(paymentTermsDays),
       currency: currency.trim() === '' ? 'BHD' : currency.trim().toUpperCase(),
+      practicalCompletionDate: practicalCompletionDate.trim() === '' ? null : practicalCompletionDate,
+      defectsLiabilityMonths: numOrNull(defectsLiabilityMonths),
+      retentionFirstReleasePct: numOrNull(retentionFirstReleasePct),
     })
   }
 
@@ -189,6 +202,25 @@ export function ProjectForm({
             Payment terms set each certified valuation&apos;s expected receipt date (certified date + days). Leave
             blank for no agreed terms — certificates then carry no expected-receipt date. Single-currency only;
             multi-currency is not handled.
+          </p>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <Input
+              label="Practical completion" type="date"
+              value={practicalCompletionDate} onChange={(e) => setPracticalCompletionDate(e.target.value)}
+            />
+            <Input
+              label="Defects liability (months)" type="number" min="0" step="1" inputMode="numeric"
+              value={defectsLiabilityMonths} onChange={(e) => setDefectsLiabilityMonths(e.target.value)} placeholder="12"
+            />
+            <Input
+              label="First retention release %" type="number" min="0" max="100" step="0.01" inputMode="decimal"
+              value={retentionFirstReleasePct} onChange={(e) => setRetentionFirstReleasePct(e.target.value)} placeholder="50"
+            />
+          </div>
+          <p className="text-xs text-fg-subtle">
+            Retention release: the first tranche falls due at practical completion, the balance at completion +
+            defects-liability months. Without a completion date, held retention is shown as unscheduled.
           </p>
         </div>
       </details>

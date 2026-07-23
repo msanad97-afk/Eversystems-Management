@@ -227,3 +227,77 @@ export function buildForecast(
 export function unscheduledPayables(outflows: ForecastOutflow[]): number {
   return round(outflows.filter((o) => o.dueDate == null && o.outstanding > 0).reduce((s, o) => s + o.outstanding, 0), MONEY_DP)
 }
+
+// ─── Phase 8: retention release ─────────────────────────────────────────────────
+
+/** Add `n` whole months to a date, UTC, clamping to the end of the target month. */
+export function addMonths(date: Date, n: number): Date {
+  const y = date.getUTCFullYear()
+  const m = date.getUTCMonth() + n
+  const targetLastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate()
+  return new Date(Date.UTC(y, m, Math.min(date.getUTCDate(), targetLastDay)))
+}
+
+export interface RetentionTranche {
+  amount: number // the tranche's share of held retention
+  due: Date | null // null when the completion date (or defects period) is not set
+  remaining: number // amount still to release, after applying released receipts
+}
+export interface RetentionState {
+  held: number // the LATEST certified period's cumulative retentionHeld — never a sum
+  released: number // Σ RETENTION_RELEASE receipts
+  outstanding: number // held − released
+  firstReleasePct: number
+  tranche1: RetentionTranche
+  tranche2: RetentionTranche
+}
+
+/**
+ * The two presentational release tranches. `held` MUST be the latest certified period's
+ * cumulative value (the caller's responsibility). Released receipts pay down tranche 1 first,
+ * then tranche 2 — so a partial release leaves the remainder, and the tranches never over-report
+ * what is still owed. Tranches only inform what is due and when; a receipt need not match one.
+ */
+export function retentionState(
+  held: number,
+  released: number,
+  firstReleasePct: number | null,
+  pcDate: Date | null,
+  defectsLiabilityMonths: number | null,
+): RetentionState {
+  const pct = firstReleasePct ?? 50
+  const tranche1Amount = round(held * (pct / 100), MONEY_DP)
+  const tranche2Amount = round(held - tranche1Amount, MONEY_DP)
+
+  const releasedToT1 = Math.min(released, tranche1Amount)
+  const t1remaining = round(Math.max(0, tranche1Amount - releasedToT1), MONEY_DP)
+  const releasedToT2 = round(Math.max(0, released - tranche1Amount), MONEY_DP)
+  const t2remaining = round(Math.max(0, tranche2Amount - releasedToT2), MONEY_DP)
+
+  const tranche2Due = pcDate != null && defectsLiabilityMonths != null ? addMonths(pcDate, defectsLiabilityMonths) : null
+
+  return {
+    held: round(held, MONEY_DP),
+    released: round(released, MONEY_DP),
+    outstanding: round(held - released, MONEY_DP),
+    firstReleasePct: pct,
+    tranche1: { amount: tranche1Amount, due: pcDate, remaining: t1remaining },
+    tranche2: { amount: tranche2Amount, due: tranche2Due, remaining: t2remaining },
+  }
+}
+
+/**
+ * Turn a project's retention tranches into forecast inflows (dated) plus an undated remainder.
+ * Same rules as a receivable: overdue lands in the current month (handled by `buildForecast`);
+ * a tranche with no due date is NOT bucketed — it becomes `unscheduledRetention`.
+ */
+export function retentionInflows(state: RetentionState): { inflows: ForecastInflow[]; unscheduled: number } {
+  const inflows: ForecastInflow[] = []
+  let unscheduled = 0
+  for (const t of [state.tranche1, state.tranche2]) {
+    if (t.remaining <= 0) continue
+    if (t.due == null) unscheduled = round(unscheduled + t.remaining, MONEY_DP)
+    else inflows.push({ expectedReceipt: t.due, outstanding: t.remaining })
+  }
+  return { inflows, unscheduled }
+}

@@ -28,6 +28,9 @@ export async function GET() {
       advancePct: true,
       paymentTermsDays: true,
       currency: true,
+      practicalCompletionDate: true,
+      defectsLiabilityMonths: true,
+      retentionFirstReleasePct: true,
       members: {
         select: {
           user: { select: { id: true, userCode: true, firstName: true, lastName: true, role: true } },
@@ -93,6 +96,24 @@ export async function POST(req: NextRequest) {
     if (v === undefined) return NextResponse.json({ error: 'currency must be a 3-letter code (e.g. BHD).' }, { status: 400 })
     financials.currency = v
   }
+  // Phase 8: retention-release terms.
+  for (const field of ['retentionFirstReleasePct'] as const) {
+    if (field in body) {
+      const v = parsePercent(body[field])
+      if (v === undefined) return NextResponse.json({ error: `${field} must be null or a number from 0 to 100.` }, { status: 400 })
+      financials[field] = v
+    }
+  }
+  if ('defectsLiabilityMonths' in body) {
+    const v = parseNonNegativeInt(body.defectsLiabilityMonths)
+    if (v === undefined) return NextResponse.json({ error: 'defectsLiabilityMonths must be null or a whole number of 0 or more.' }, { status: 400 })
+    financials.defectsLiabilityMonths = v
+  }
+  let practicalCompletionDate: Date | null | undefined
+  if ('practicalCompletionDate' in body && body.practicalCompletionDate != null && body.practicalCompletionDate !== '') {
+    practicalCompletionDate = parseDate(body.practicalCompletionDate)
+    if (!practicalCompletionDate) return NextResponse.json({ error: 'practicalCompletionDate must be a valid date or empty.' }, { status: 400 })
+  }
 
   if (memberIds.length > 0) {
     const count = await prisma.user.count({ where: { id: { in: memberIds } } })
@@ -113,6 +134,7 @@ export async function POST(req: NextRequest) {
         startDate,
         createdBy: guard.user.id,
         ...financials,
+        ...(practicalCompletionDate !== undefined ? { practicalCompletionDate } : {}),
         members: { create: memberIds.map((userId) => ({ userId })) },
       },
       select: { id: true, projectCode: true, name: true },

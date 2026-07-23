@@ -6,7 +6,7 @@ import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
 import { isNonEmptyString, parseDate } from '@/lib/validation'
 import { directionFor } from '@/lib/cash'
-import { loadLedger, resolveValuationMatch, type LedgerFilters } from '@/lib/cash.server'
+import { loadLedger, resolveValuationMatch, retentionOutstanding, type LedgerFilters } from '@/lib/cash.server'
 import { round } from '@/lib/budget'
 import { MONEY_DP } from '@/lib/evm'
 
@@ -109,6 +109,22 @@ export async function POST(req: NextRequest) {
     if (!expense) return NextResponse.json({ error: 'Matched expense not found.' }, { status: 400 })
     expenseId = body.expenseId
     if (expense.projectId) projectId = expense.projectId
+  }
+
+  // Over-release guard for a retention release — same confirmable-flag pattern as over-payment
+  // (§8.1). A release may not exceed the project's outstanding retention unless confirmed.
+  if (category === 'RETENTION_RELEASE' && projectId) {
+    const outstanding = await retentionOutstanding(projectId)
+    if (amount > outstanding && body.allowOverpay !== true) {
+      return NextResponse.json(
+        {
+          error: `This release (${amount}) exceeds the retention outstanding (${outstanding}). Confirm to record an over-release.`,
+          outstanding,
+          requiresOverpayConfirm: true,
+        },
+        { status: 409 },
+      )
+    }
   }
 
   // ── single-currency guard: a linked project's currency must match the account's ──

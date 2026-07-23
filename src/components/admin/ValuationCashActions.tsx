@@ -134,3 +134,94 @@ function ReceiptForm({
     </form>
   )
 }
+
+/**
+ * Record a retention release — a manual RETENTION_RELEASE inflow matched to the project
+ * (prefilled to the outstanding retention). Over-release prompts for confirmation, mirroring
+ * the receipt over-payment flow.
+ */
+export function RetentionReleaseButton({
+  projectId,
+  outstanding,
+  accounts,
+}: {
+  projectId: string
+  outstanding: number
+  accounts: ReceiptAccount[]
+}) {
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button size="sm" variant="secondary" onClick={() => setOpen(true)} disabled={accounts.length === 0}>Record retention release</Button>
+      <Modal open={open} onClose={() => setOpen(false)} title="Record retention release">
+        <ReleaseForm projectId={projectId} outstanding={outstanding} accounts={accounts} onDone={() => { setOpen(false); router.refresh() }} />
+      </Modal>
+    </>
+  )
+}
+
+function ReleaseForm({
+  projectId, outstanding, accounts, onDone,
+}: {
+  projectId: string; outstanding: number; accounts: ReceiptAccount[]; onDone: () => void
+}) {
+  const { showToast } = useToast()
+  const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
+  const [amount, setAmount] = useState(outstanding > 0 ? String(outstanding) : '')
+  const [txnDate, setTxnDate] = useState(new Date().toISOString().slice(0, 10))
+  const [cleared, setCleared] = useState(true)
+  const [busy, setBusy] = useState(false)
+
+  async function post(allowOverpay: boolean) {
+    return fetch('/api/cash/transactions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        accountId, category: 'RETENTION_RELEASE', amount: Number(amount),
+        description: 'Retention release', txnDate, projectId,
+        clearedAt: cleared ? txnDate : null, allowOverpay,
+      }),
+    })
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      let res = await post(false)
+      if (res.status === 409) {
+        const data = await res.json().catch(() => ({}))
+        if (data.requiresOverpayConfirm) {
+          if (!confirm(`${data.error}\n\nRecord it anyway as an over-release?`)) { setBusy(false); return }
+          res = await post(true)
+        }
+      }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Could not record.')
+      showToast('Retention release recorded.', 'success')
+      onDone()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not record.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <p className="text-sm text-fg-subtle">Retention outstanding: <span className="font-medium text-fg tabular-nums">{outstanding.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</span></p>
+      <Select label="Into account" value={accountId} onChange={(e) => setAccountId(e.target.value)} required>
+        {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} ({a.currency})</option>)}
+      </Select>
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Amount released" type="number" step="0.001" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+        <Input label="Date" type="date" value={txnDate} onChange={(e) => setTxnDate(e.target.value)} required />
+      </div>
+      <label className="flex items-center gap-2 text-sm text-fg">
+        <input type="checkbox" className="h-4 w-4 accent-primary" checked={cleared} onChange={(e) => setCleared(e.target.checked)} />
+        Already cleared the bank
+      </label>
+      <div className="flex justify-end"><Button type="submit" loading={busy}>Record release</Button></div>
+    </form>
+  )
+}

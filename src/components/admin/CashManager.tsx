@@ -33,12 +33,10 @@ export function CashManager({
   accounts,
   projects,
   ledger,
-  total,
 }: {
   accounts: AccountOption[]
   projects: ProjectOption[]
   ledger: LedgerRow[]
-  total: number
 }) {
   const router = useRouter()
   const { showToast } = useToast()
@@ -123,7 +121,6 @@ export function CashManager({
               ))}
             </TBody>
           </Table>
-          {total > ledger.length && <p className="px-4 py-2 text-xs text-fg-subtle">Showing {ledger.length} of {total}. Refine with filters (coming from the API) to see more.</p>}
         </div>
       )}
 

@@ -101,6 +101,7 @@ export function ValuationActions({
         showToast(
           action === 'recompute' ? 'Recomputed from current approved progress.'
             : action === 'submit' ? 'Sent to the client.'
+            : action === 'recall' ? 'Recalled to draft.'
             : 'Certified — these figures are now frozen.',
           'success',
         )
@@ -145,6 +146,22 @@ export function ValuationActions({
           }
         >
           Certify (client approved)
+        </Button>
+      )}
+      {status === 'SUBMITTED' && (
+        <Button
+          size="sm"
+          variant="secondary"
+          loading={busy === 'recall'}
+          onClick={() =>
+            call('recall', 'POST',
+              'Recall this certificate to draft?\n\n' +
+                'Use this when the client hands it back before approving. It returns to DRAFT so you can ' +
+                'edit and re-submit. (A change AFTER approval is a re-issue, not a recall.)',
+            )
+          }
+        >
+          Recall to draft
         </Button>
       )}
       {!canCertify && (isDraft || status === 'SUBMITTED') && blockers.length > 0 && (

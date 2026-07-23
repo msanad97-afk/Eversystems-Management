@@ -2,7 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { round } from '@/lib/budget'
 import { MONEY_DP } from '@/lib/evm'
 import { loadPortfolioEvm, type PortfolioRow } from '@/lib/evm.server'
-import { loadForecast, loadReceivables } from '@/lib/cash.server'
+import { loadForecast, loadReceivables, loadAllRetention } from '@/lib/cash.server'
 import type { ForecastRow } from '@/lib/cash'
 import type { AgeBucket } from '@/lib/cash'
 
@@ -31,6 +31,7 @@ export interface AgeingSummary {
 export type AttentionKind =
   | 'NEGATIVE_MARGIN' | 'LOW_CPI' | 'LOW_SPI' | 'OVERDUE_RECEIVABLE'
   | 'UNPRICED_SCOPE' | 'UNINVOICED_VALUATION' | 'NO_BASELINE' | 'OVERDUE_PAYABLE'
+  | 'RETENTION_DUE'
 
 export interface AttentionItem {
   kind: AttentionKind
@@ -61,7 +62,7 @@ export interface ExecutiveDashboard {
 const ATTENTION_CAP = 10
 
 export async function loadExecutiveDashboard(months: number, today: Date): Promise<ExecutiveDashboard> {
-  const [portfolio, forecast, receivables, uninvoiced, overduePayables] = await Promise.all([
+  const [portfolio, forecast, receivables, uninvoiced, overduePayables, retention] = await Promise.all([
     loadPortfolioEvm(today),
     loadForecast(months, today),
     loadReceivables({ today }),
@@ -72,6 +73,8 @@ export async function loadExecutiveDashboard(months: number, today: Date): Promi
     }),
     // Overdue payables: a due date in the past with amount still outstanding.
     loadOverduePayables(today),
+    // Retention past a tranche due date and still outstanding (the easiest money to forget).
+    loadAllRetention(today),
   ])
 
   // ── cash headline ──
@@ -139,6 +142,9 @@ export async function loadExecutiveDashboard(months: number, today: Date): Promi
   }
   for (const e of overduePayables) {
     items.push({ kind: 'OVERDUE_PAYABLE', severity: 'warning', title: `Overdue payable: ${e.description}`, detail: `${e.outstanding.toFixed(3)} due ${e.dueDate} and still outstanding${e.projectName ? ` · ${e.projectName}` : ''}.`, href: e.projectId ? `${projectHref(e.projectId)}` : '/admin/cash', impact: e.outstanding })
+  }
+  for (const r of retention.pastDue) {
+    items.push({ kind: 'RETENTION_DUE', severity: 'warning', title: `${r.projectName}: ${r.outstanding.toFixed(3)} retention due`, detail: `A retention release tranche is past its due date and still outstanding.`, href: `${projectHref(r.projectId)}/valuations`, impact: r.outstanding })
   }
 
   items.sort((a, b) => b.impact - a.impact)

@@ -87,6 +87,7 @@ enum AuditAction {
   VALUATION_CERTIFIED
   VALUATION_REISSUED
   VALUATION_INVOICED
+  VALUATION_RECALLED
   BANK_ACCOUNT_CREATED
   BANK_ACCOUNT_UPDATED
   CASH_TXN_CREATED
@@ -147,6 +148,11 @@ model Project {
   paymentTermsDays Int?      @default(45)
   plannedStart     DateTime? @db.Date
   plannedEnd       DateTime? @db.Date
+  // Phase 8: retention release. Held retention is derived from certificates (6D); a release is
+  // a manual RETENTION_RELEASE cash receipt. These drive the presentational release tranches.
+  practicalCompletionDate  DateTime? @db.Date          // trigger for tranche 1
+  defectsLiabilityMonths   Int?      @default(12)       // tranche 2 due = PC date + this
+  retentionFirstReleasePct Decimal?  @db.Decimal(5, 2) @default(50) // % released at PC
 
   members          ProjectMember[]
   reports          DailyReport[]

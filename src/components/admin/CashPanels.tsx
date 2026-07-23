@@ -1,4 +1,4 @@
-import type { AccountView, CashPosition, ReceivableRow, CashForecast, AdvanceBlock } from '@/lib/cash.server'
+import type { AccountView, CashPosition, ReceivableRow, CashForecast, AdvanceBlock, RetentionBlock } from '@/lib/cash.server'
 import type { PaymentState, AgeBucket } from '@/lib/cash'
 import { AGE_BUCKET_LABEL } from '@/lib/cash'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/Table'
@@ -144,6 +144,9 @@ export function ForecastPanel({ forecast }: { forecast: CashForecast }) {
         {forecast.unscheduledPayables > 0 && (
           <> <span className="text-warning">Plus {bhd(forecast.unscheduledPayables)} of unscheduled payables</span> (expenses with no due date) — outstanding but not placed in any month.</>
         )}
+        {forecast.unscheduledRetention > 0 && (
+          <> <span className="text-warning">Plus {bhd(forecast.unscheduledRetention)} of unscheduled retention</span> (no completion date set) — owed but not yet dated.</>
+        )}
       </p>
     </section>
   )
@@ -172,5 +175,42 @@ function Fig({ label, value, sub, tone }: { label: string; value: string; sub?: 
       <p className={`mt-1 text-lg font-semibold tabular-nums ${tone === 'danger' ? 'text-danger' : 'text-fg'}`}>{value}</p>
       {sub && <p className="text-xs text-fg-subtle">{sub}</p>}
     </div>
+  )
+}
+
+// ─── Retention block (per project) ──────────────────────────────────────────────
+
+function trancheDue(due: string | null): string {
+  return due == null ? 'completion date not set' : due
+}
+
+/** `action` is the client "Record retention release" control, injected by the page. */
+export function RetentionBlockPanel({ retention, action }: { retention: RetentionBlock; action?: React.ReactNode }) {
+  const t1Due = retention.tranche1.due ? retention.tranche1.due.toISOString().slice(0, 10) : null
+  const t2Due = retention.tranche2.due ? retention.tranche2.due.toISOString().slice(0, 10) : null
+  return (
+    <section className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Retention</h2>
+        {action}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Fig label="Held" value={bhd(retention.held)} sub="latest certificate (cumulative)" />
+        <Fig label="Released" value={bhd(retention.released)} sub="retention releases in" />
+        <Fig label="Outstanding" value={bhd(retention.outstanding)} sub="still to release" tone={retention.outstanding < 0 ? 'danger' : undefined} />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-fg-subtle">Tranche 1 ({retention.firstReleasePct}%)</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-fg">{bhd(retention.tranche1.amount)}</p>
+          <p className="text-xs text-fg-subtle">due {trancheDue(t1Due)} · {bhd(retention.tranche1.remaining)} remaining</p>
+        </div>
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-fg-subtle">Tranche 2 (balance)</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-fg">{bhd(retention.tranche2.amount)}</p>
+          <p className="text-xs text-fg-subtle">due {trancheDue(t2Due)} · {bhd(retention.tranche2.remaining)} remaining</p>
+        </div>
+      </div>
+    </section>
   )
 }

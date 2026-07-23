@@ -4,10 +4,11 @@ import { prisma } from '@/lib/prisma'
 import { requireAdminPage } from '@/lib/auth/permissions'
 import { listValuations, certifyBlockers } from '@/lib/valuation.server'
 import { loadProjectEvm } from '@/lib/evm.server'
-import { loadReceivables, loadAdvanceBlock } from '@/lib/cash.server'
+import { loadReceivables, loadAdvanceBlock, loadRetentionBlock } from '@/lib/cash.server'
 import { CertifyGatePanel, ValuationList, RevenueVsEvPanel } from '@/components/admin/ValuationPanels'
-import { ReceivablesTable, AdvanceBlockPanel } from '@/components/admin/CashPanels'
+import { ReceivablesTable, AdvanceBlockPanel, RetentionBlockPanel } from '@/components/admin/CashPanels'
 import { NewValuationForm } from '@/components/admin/ValuationActions'
+import { RetentionReleaseButton } from '@/components/admin/ValuationCashActions'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,12 +24,14 @@ export default async function ValuationsPage({ params }: { params: { id: string 
   })
   if (!project) notFound()
 
-  const [valuations, blockers, evm, receivables, advance] = await Promise.all([
+  const [valuations, blockers, evm, receivables, advance, retention, accounts] = await Promise.all([
     listValuations(project.id),
     certifyBlockers(project.id),
     loadProjectEvm(project.id),
     loadReceivables({ projectId: project.id, today: utcDay() }),
     loadAdvanceBlock(project.id),
+    loadRetentionBlock(project.id),
+    prisma.bankAccount.findMany({ where: { isActive: true }, orderBy: { name: 'asc' }, select: { id: true, name: true, currency: true } }),
   ])
 
   // The latest CERTIFIED cumulative gross — what the client has actually approved to date.
@@ -54,6 +57,13 @@ export default async function ValuationsPage({ params }: { params: { id: string 
       <ValuationList projectId={project.id} valuations={valuations} />
 
       {advance && <AdvanceBlockPanel advance={advance} />}
+
+      {retention && (
+        <RetentionBlockPanel
+          retention={retention}
+          action={<RetentionReleaseButton projectId={project.id} outstanding={retention.outstanding} accounts={accounts} />}
+        />
+      )}
 
       <section className="space-y-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Receivables &amp; ageing</h2>

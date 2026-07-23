@@ -9,6 +9,7 @@ import { isNonEmptyString, isProjectStatus, parseDate, toIdArray, parsePercent, 
 // billed and when payment falls due — names alone would be the weakest money audit in the app).
 const AUDITED_FINANCIAL_FIELDS = [
   'contractValue', 'budgetCost', 'retentionPct', 'retentionCapPct', 'advancePct', 'paymentTermsDays', 'currency',
+  'defectsLiabilityMonths', 'retentionFirstReleasePct', // Phase 8 (practicalCompletionDate audited by name only)
 ] as const
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -65,6 +66,24 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const v = parseCurrency(body.currency)
     if (v === undefined) return NextResponse.json({ error: 'currency must be a 3-letter code (e.g. BHD).' }, { status: 400 })
     data.currency = v
+  }
+
+  // ─── Phase 8: retention-release terms (practical completion, defects period, first release %) ───
+  if ('practicalCompletionDate' in body) {
+    data.practicalCompletionDate = body.practicalCompletionDate == null || body.practicalCompletionDate === '' ? null : parseDate(body.practicalCompletionDate)
+    if (data.practicalCompletionDate === null && body.practicalCompletionDate != null && body.practicalCompletionDate !== '') {
+      return NextResponse.json({ error: 'practicalCompletionDate must be a valid date or empty.' }, { status: 400 })
+    }
+  }
+  if ('defectsLiabilityMonths' in body) {
+    const v = parseNonNegativeInt(body.defectsLiabilityMonths)
+    if (v === undefined) return NextResponse.json({ error: 'defectsLiabilityMonths must be null or a whole number of 0 or more.' }, { status: 400 })
+    data.defectsLiabilityMonths = v
+  }
+  if ('retentionFirstReleasePct' in body) {
+    const v = parsePercent(body.retentionFirstReleasePct)
+    if (v === undefined) return NextResponse.json({ error: 'retentionFirstReleasePct must be null or a number from 0 to 100.' }, { status: 400 })
+    data.retentionFirstReleasePct = v
   }
 
   // ─── Member diff ───
@@ -169,6 +188,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       advancePct: true,
       paymentTermsDays: true,
       currency: true,
+      practicalCompletionDate: true,
+      defectsLiabilityMonths: true,
+      retentionFirstReleasePct: true,
     },
   })
 

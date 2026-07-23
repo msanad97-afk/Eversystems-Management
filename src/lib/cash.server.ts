@@ -6,7 +6,9 @@ import { loadProjectMoney } from '@/lib/money.server'
 import { loadCertifiedRevisionsByPeriod } from '@/lib/valuation.server'
 import {
   accountBalances, sumBalances, directionFor, paymentState, ageBucket, buildForecast, unscheduledPayables, monthKeyOf,
+  retentionState, retentionInflows,
   type AccountBalances, type PaymentState, type AgeBucket, type ForecastInflow, type ForecastOutflow, type ForecastRow,
+  type RetentionState,
 } from '@/lib/cash'
 
 const n = (v: unknown): number => (v == null ? 0 : Number(v))
@@ -149,6 +151,7 @@ export interface CashForecast {
   months: ForecastRow[] // Phase 7: inflow + outflow + net + running balance per month
   clearedBalance: number
   unscheduledPayables: number // Σ outstanding of payables with NO due date — reported separately
+  unscheduledRetention: number // Phase 8: retention owed but with no completion date to place it on
 }
 
 /**
@@ -169,19 +172,25 @@ async function loadExpensePayables(): Promise<ForecastOutflow[]> {
 }
 
 export async function loadForecast(months: number, today: Date): Promise<CashForecast> {
-  const [receivables, position, payables] = await Promise.all([
+  const [receivables, position, payables, retention] = await Promise.all([
     loadReceivables({ today }),
     loadCashPosition(),
     loadExpensePayables(),
+    loadAllRetention(today),
   ])
   const inflows: ForecastInflow[] = receivables
     .filter((r) => r.outstanding > 0)
     .map((r) => ({ expectedReceipt: r.expectedReceipt ? new Date(`${r.expectedReceipt}T00:00:00.000Z`) : null, outstanding: r.outstanding }))
 
+  // Retention owed with a due date is an inflow like any receivable; undated retention is
+  // surfaced separately (never guessed into a month), mirroring unscheduled payables.
+  const allInflows = [...inflows, ...retention.inflows]
+
   return {
-    months: buildForecast(inflows, payables, position.totals.clearedBalance, monthKeyOf(today), months),
+    months: buildForecast(allInflows, payables, position.totals.clearedBalance, monthKeyOf(today), months),
     clearedBalance: position.totals.clearedBalance,
     unscheduledPayables: unscheduledPayables(payables),
+    unscheduledRetention: retention.unscheduledRetention,
   }
 }
 
@@ -221,6 +230,91 @@ export async function loadAdvanceBlock(projectId: string): Promise<AdvanceBlock 
     recovered,
     outstanding: round(receivedTotal - recovered, MONEY_DP),
   }
+}
+
+// ─── Retention release (per project) ─────────────────────────────────────────────
+
+export interface RetentionBlock extends RetentionState {
+  projectId: string
+}
+
+/**
+ * Retention held/released/outstanding + the two release tranches for one project.
+ *
+ * `held` is the LATEST certified period's CUMULATIVE `retentionHeld` — the last row of the
+ * period-ascending helper — NEVER a sum across periods (that would multiply retention by the
+ * certificate count; the §8.1 trap). Returns null when nothing is held, so the UI hides it.
+ */
+export async function loadRetentionBlock(projectId: string): Promise<RetentionBlock | null> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { practicalCompletionDate: true, defectsLiabilityMonths: true, retentionFirstReleasePct: true },
+  })
+  if (!project) return null
+
+  const [certified, released] = await Promise.all([
+    loadCertifiedRevisionsByPeriod(prisma, { projectId }),
+    prisma.cashTransaction.aggregate({ where: { projectId, direction: 'IN', category: 'RETENTION_RELEASE' }, _sum: { amount: true } }),
+  ])
+  const held = certified.length > 0 ? certified[certified.length - 1]!.retentionHeld : 0
+  if (!(held > 0)) return null
+
+  const state = retentionState(
+    held,
+    n(released._sum.amount),
+    project.retentionFirstReleasePct == null ? null : n(project.retentionFirstReleasePct),
+    project.practicalCompletionDate,
+    project.defectsLiabilityMonths,
+  )
+  return { projectId, ...state }
+}
+
+export interface RetentionForecast {
+  inflows: ForecastInflow[]
+  unscheduledRetention: number
+  /** Per project: retention past its tranche due date and still outstanding (executive hook). */
+  pastDue: { projectId: string; projectName: string; outstanding: number }[]
+}
+
+/**
+ * Company-wide retention: forecast inflows (dated tranches) + undated remainder, and the
+ * per-project past-due outstanding for the executive attention list. One pass over the projects
+ * that actually hold retention.
+ */
+export async function loadAllRetention(today: Date = new Date()): Promise<RetentionForecast> {
+  const cutoff = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())
+  const projects = await prisma.project.findMany({
+    where: { valuations: { some: { status: 'CERTIFIED' } } },
+    select: { id: true, name: true, practicalCompletionDate: true, defectsLiabilityMonths: true, retentionFirstReleasePct: true },
+  })
+
+  const inflows: ForecastInflow[] = []
+  let unscheduledRetention = 0
+  const pastDue: RetentionForecast['pastDue'] = []
+
+  for (const p of projects) {
+    const block = await loadRetentionBlock(p.id)
+    if (!block) continue
+    const { inflows: pIn, unscheduled } = retentionInflows(block)
+    inflows.push(...pIn)
+    unscheduledRetention = round(unscheduledRetention + unscheduled, MONEY_DP)
+
+    let due = 0
+    for (const t of [block.tranche1, block.tranche2]) {
+      if (t.remaining > 0 && t.due != null && Date.UTC(t.due.getUTCFullYear(), t.due.getUTCMonth(), t.due.getUTCDate()) < cutoff) {
+        due = round(due + t.remaining, MONEY_DP)
+      }
+    }
+    if (due > 0) pastDue.push({ projectId: p.id, projectName: p.name, outstanding: due })
+  }
+
+  return { inflows, unscheduledRetention, pastDue }
+}
+
+/** The outstanding retention for a project — used by the RETENTION_RELEASE over-release guard. */
+export async function retentionOutstanding(projectId: string): Promise<number> {
+  const block = await loadRetentionBlock(projectId)
+  return block?.outstanding ?? 0
 }
 
 // ─── Ledger listing ──────────────────────────────────────────────────────────

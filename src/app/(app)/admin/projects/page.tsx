@@ -24,6 +24,9 @@ export default async function AdminProjectsPage() {
         advancePct: true,
         paymentTermsDays: true,
         currency: true,
+        practicalCompletionDate: true,
+        defectsLiabilityMonths: true,
+        retentionFirstReleasePct: true,
         members: {
           select: {
             user: { select: { id: true, userCode: true, firstName: true, lastName: true, role: true } },
@@ -59,6 +62,9 @@ export default async function AdminProjectsPage() {
       advancePct: dec(p.advancePct),
       paymentTermsDays: p.paymentTermsDays == null ? '' : String(p.paymentTermsDays),
       currency: p.currency ?? '',
+      practicalCompletionDate: p.practicalCompletionDate ? p.practicalCompletionDate.toISOString().slice(0, 10) : '',
+      defectsLiabilityMonths: p.defectsLiabilityMonths == null ? '' : String(p.defectsLiabilityMonths),
+      retentionFirstReleasePct: dec(p.retentionFirstReleasePct),
     },
   }))
 
