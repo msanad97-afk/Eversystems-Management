@@ -10,7 +10,7 @@ import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/Table'
 import { useToast } from '@/contexts/ToastContext'
-import { ProjectForm, type UserOption, type ProjectFormPayload } from '@/components/admin/ProjectForm'
+import { ProjectForm, type UserOption, type ProjectFormPayload, type ProjectFormFinancials } from '@/components/admin/ProjectForm'
 
 interface AdminProject {
   id: string
@@ -21,6 +21,7 @@ interface AdminProject {
   startDate: string
   members: UserOption[]
   hasScope: boolean
+  financials: ProjectFormFinancials
 }
 
 const STATUS_TONE: Record<ProjectStatus, 'success' | 'warning' | 'neutral'> = {
@@ -163,6 +164,7 @@ export function ProjectsClient({
               status: editing.status,
               startDate: editing.startDate,
               memberIds: editing.members.map((m) => m.id),
+              financials: editing.financials,
             }}
             onSubmit={updateProject}
             onCancel={() => setEditing(null)}

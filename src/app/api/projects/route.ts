@@ -4,7 +4,7 @@ import { requireAdmin } from '@/lib/auth/permissions'
 import { nextCode } from '@/lib/idgen'
 import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
-import { isNonEmptyString, isProjectStatus, parseDate, toIdArray } from '@/lib/validation'
+import { isNonEmptyString, isProjectStatus, parseDate, toIdArray, parsePercent, parseNonNegativeInt, parseCurrency } from '@/lib/validation'
 import { todayCivilString } from '@/lib/datetime'
 
 export async function GET() {
@@ -21,6 +21,13 @@ export async function GET() {
       status: true,
       startDate: true,
       createdAt: true,
+      contractValue: true,
+      budgetCost: true,
+      retentionPct: true,
+      retentionCapPct: true,
+      advancePct: true,
+      paymentTermsDays: true,
+      currency: true,
       members: {
         select: {
           user: { select: { id: true, userCode: true, firstName: true, lastName: true, role: true } },
@@ -54,6 +61,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Project name is required.' }, { status: 400 })
   }
 
+  // ─── Phase 6E-pre: header financials, settable at creation. Same rules as the PATCH.
+  //     Absent → column default (currency BHD, paymentTermsDays 45); present-but-invalid → 400.
+  const financials: Record<string, number | string | null> = {}
+  const money = (v: unknown): number | null | undefined => {
+    if (v === null || v === '') return null
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0 ? n : undefined
+  }
+  for (const field of ['contractValue', 'budgetCost'] as const) {
+    if (field in body) {
+      const v = money(body[field])
+      if (v === undefined) return NextResponse.json({ error: `${field} must be a number of 0 or more.` }, { status: 400 })
+      financials[field] = v
+    }
+  }
+  for (const field of ['retentionPct', 'retentionCapPct', 'advancePct'] as const) {
+    if (field in body) {
+      const v = parsePercent(body[field])
+      if (v === undefined) return NextResponse.json({ error: `${field} must be null or a number from 0 to 100.` }, { status: 400 })
+      financials[field] = v
+    }
+  }
+  if ('paymentTermsDays' in body) {
+    const v = parseNonNegativeInt(body.paymentTermsDays)
+    if (v === undefined) return NextResponse.json({ error: 'paymentTermsDays must be null or a whole number of 0 or more.' }, { status: 400 })
+    financials.paymentTermsDays = v
+  }
+  if ('currency' in body) {
+    const v = parseCurrency(body.currency)
+    if (v === undefined) return NextResponse.json({ error: 'currency must be a 3-letter code (e.g. BHD).' }, { status: 400 })
+    financials.currency = v
+  }
+
   if (memberIds.length > 0) {
     const count = await prisma.user.count({ where: { id: { in: memberIds } } })
     if (count !== memberIds.length) {
@@ -72,6 +112,7 @@ export async function POST(req: NextRequest) {
         status,
         startDate,
         createdBy: guard.user.id,
+        ...financials,
         members: { create: memberIds.map((userId) => ({ userId })) },
       },
       select: { id: true, projectCode: true, name: true },
@@ -86,7 +127,7 @@ export async function POST(req: NextRequest) {
     entity: 'Project',
     entityId: created.id,
     entityCode: created.projectCode,
-    metadata: { name: created.name, memberCount: memberIds.length },
+    metadata: { name: created.name, memberCount: memberIds.length, ...(Object.keys(financials).length > 0 ? { financials } : {}) },
     ipAddress,
   })
   for (const userId of memberIds) {

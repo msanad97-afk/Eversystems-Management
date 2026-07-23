@@ -17,6 +17,13 @@ export default async function AdminProjectsPage() {
         location: true,
         status: true,
         startDate: true,
+        contractValue: true,
+        budgetCost: true,
+        retentionPct: true,
+        retentionCapPct: true,
+        advancePct: true,
+        paymentTermsDays: true,
+        currency: true,
         members: {
           select: {
             user: { select: { id: true, userCode: true, firstName: true, lastName: true, role: true } },
@@ -32,6 +39,9 @@ export default async function AdminProjectsPage() {
     }),
   ])
 
+  // Decimal → string ('' when null) so the edit form prefills exactly what is stored and an
+  // unchanged save round-trips the same value — never blanking a project's financials.
+  const dec = (v: unknown): string => (v == null ? '' : String(v))
   const serialized = projects.map((p) => ({
     id: p.id,
     projectCode: p.projectCode,
@@ -41,6 +51,15 @@ export default async function AdminProjectsPage() {
     startDate: p.startDate ? p.startDate.toISOString().slice(0, 10) : '',
     members: p.members.map((m) => m.user),
     hasScope: p._count.assets > 0,
+    financials: {
+      contractValue: dec(p.contractValue),
+      budgetCost: dec(p.budgetCost),
+      retentionPct: dec(p.retentionPct),
+      retentionCapPct: dec(p.retentionCapPct),
+      advancePct: dec(p.advancePct),
+      paymentTermsDays: p.paymentTermsDays == null ? '' : String(p.paymentTermsDays),
+      currency: p.currency ?? '',
+    },
   }))
 
   return <ProjectsClient projects={serialized} users={users} />
