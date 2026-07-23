@@ -40,31 +40,79 @@ export interface ValuationComputation extends PeriodFigures {
 }
 
 /**
- * Prior certified state for a project as of a period: the LATEST CERTIFIED revision of each
- * earlier period (highest revisionNumber — after a re-issue that is the newest certified one,
- * and while a re-issued month sits in DRAFT it is still the last thing the client approved).
+ * THE definition of "what has been certified": the current certified revision of each period
+ * (highest revisionNumber wins — after a re-issue that is the newest certified one), sorted by
+ * period ascending. Both 6D's prior-period arithmetic and 6E's receivables depend on this, so
+ * there is ONE implementation and they cannot drift.
  *
- * "Previous" is the most recent certified EARLIER period rather than literally last month:
- * with contiguous monthly certificates they are the same, and when a month was skipped this
- * is the only arithmetic that neither double-bills nor loses a period.
+ * `before` (exclusive) restricts to earlier periods; omit it for the full history. Numbers are
+ * already Number-converted at the boundary. Deliberately does NOT filter on invoicedAt or any
+ * payment field — a certified period stays certified once paid, which is why 6E must never
+ * advance `status`.
  */
-async function loadPriorCertified(tx: Tx, projectId: string, periodMonth: Date) {
+export interface CertifiedRevisionRow {
+  id: string
+  valuationCode: string
+  projectId: string
+  periodMonth: Date
+  revisionNumber: number
+  grossAmount: number
+  retentionHeld: number
+  advanceRecovery: number
+  netPayable: number
+  expectedReceipt: Date | null
+  invoicedAt: Date | null
+  certifiedAt: Date | null
+}
+
+export async function loadCertifiedRevisionsByPeriod(
+  tx: Tx,
+  opts: { projectId?: string; before?: Date } = {},
+): Promise<CertifiedRevisionRow[]> {
   const rows = await tx.valuation.findMany({
-    where: { projectId, periodMonth: { lt: periodMonth }, status: 'CERTIFIED' },
+    where: {
+      status: 'CERTIFIED',
+      ...(opts.projectId ? { projectId: opts.projectId } : {}),
+      ...(opts.before ? { periodMonth: { lt: opts.before } } : {}),
+    },
     orderBy: [{ periodMonth: 'asc' }, { revisionNumber: 'asc' }],
-    select: { periodMonth: true, revisionNumber: true, grossAmount: true, retentionHeld: true, advanceRecovery: true },
+    select: {
+      id: true, valuationCode: true, projectId: true, periodMonth: true, revisionNumber: true,
+      grossAmount: true, retentionHeld: true, advanceRecovery: true, netPayable: true,
+      expectedReceipt: true, invoicedAt: true, certifiedAt: true,
+    },
   })
 
-  // One row per period — later revisionNumber wins (rows arrive in ascending order).
+  // One row per period — rows arrive in revisionNumber-ascending order, so the last set wins.
   const byPeriod = new Map<string, (typeof rows)[number]>()
   for (const r of rows) byPeriod.set(r.periodMonth.toISOString().slice(0, 10), r)
 
-  const kept = [...byPeriod.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, r]) => r)
+  return [...byPeriod.values()]
+    .sort((a, b) => a.periodMonth.getTime() - b.periodMonth.getTime())
+    .map((r) => ({
+      id: r.id, valuationCode: r.valuationCode, projectId: r.projectId, periodMonth: r.periodMonth,
+      revisionNumber: r.revisionNumber, grossAmount: n(r.grossAmount), retentionHeld: n(r.retentionHeld),
+      advanceRecovery: n(r.advanceRecovery), netPayable: n(r.netPayable),
+      expectedReceipt: r.expectedReceipt, invoicedAt: r.invoicedAt, certifiedAt: r.certifiedAt,
+    }))
+}
+
+/**
+ * Prior certified state for a project as of a period — the most recent certified EARLIER
+ * period, and the running advance recovered across all of them. Built on the shared helper
+ * above so it can never disagree with 6E about which revision is current.
+ *
+ * "Previous" is the most recent certified earlier period rather than literally last month:
+ * with contiguous monthly certificates they are the same, and when a month was skipped this is
+ * the only arithmetic that neither double-bills nor loses a period.
+ */
+async function loadPriorCertified(tx: Tx, projectId: string, periodMonth: Date) {
+  const kept = await loadCertifiedRevisionsByPeriod(tx, { projectId, before: periodMonth })
   const last = kept[kept.length - 1]
   return {
-    previousGross: last ? n(last.grossAmount) : 0,
-    previousRetentionHeld: last ? n(last.retentionHeld) : 0,
-    advanceRecoveredToDate: round(kept.reduce((s, r) => s + n(r.advanceRecovery), 0), MONEY_DP),
+    previousGross: last ? last.grossAmount : 0,
+    previousRetentionHeld: last ? last.retentionHeld : 0,
+    advanceRecoveredToDate: round(kept.reduce((s, r) => s + r.advanceRecovery, 0), MONEY_DP),
   }
 }
 
@@ -252,6 +300,7 @@ export interface ValuationView {
   retentionPctAtCert: number | null
   advancePctAtCert: number | null
   certifiedAt: string | null
+  invoicedAt: string | null // Phase 6E — the manual payment-side mark (not a status transition)
   expectedReceipt: string | null
   createdAt: string
   lines: ValuationLineView[]
@@ -262,7 +311,7 @@ const valuationSelect = {
   supersededAt: true, status: true, progressPct: true, cumulativeMeasured: true,
   cumulativeLumpsum: true, grossAmount: true, previousGross: true, retentionHeld: true,
   advanceRecovery: true, netPayable: true, contractValueAtCert: true, retentionPctAtCert: true,
-  advancePctAtCert: true, certifiedAt: true, expectedReceipt: true, createdAt: true,
+  advancePctAtCert: true, certifiedAt: true, invoicedAt: true, expectedReceipt: true, createdAt: true,
   lines: { orderBy: { sortOrder: 'asc' as const }, select: { id: true, assetId: true, assetName: true, cumulativeMeasured: true, cumulativeLumpsum: true, cumulativeGross: true, sortOrder: true } },
 } as const
 
@@ -295,6 +344,7 @@ function toView(
     retentionPctAtCert: nn(v.retentionPctAtCert),
     advancePctAtCert: nn(v.advancePctAtCert),
     certifiedAt: v.certifiedAt == null ? null : v.certifiedAt.toISOString(),
+    invoicedAt: day(v.invoicedAt),
     expectedReceipt: day(v.expectedReceipt),
     createdAt: v.createdAt.toISOString(),
     lines: v.lines.map((l) => {

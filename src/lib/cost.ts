@@ -7,7 +7,7 @@ import type { ExpenseCategory } from '@prisma/client'
  *
  * Daily reports own labour and site materials, so booking those again as expenses would
  * double-count them. Hence MATERIALS_DIRECT is excluded by default (it is procurement /
- * cash, handled in 6D), and HEAD_OFFICE_OVERHEAD is company-level so it never lands on a
+ * cash, handled in 6E), and HEAD_OFFICE_OVERHEAD is company-level so it never lands on a
  * project. Expenses with no project are company overhead and never enter a project's AC.
  */
 

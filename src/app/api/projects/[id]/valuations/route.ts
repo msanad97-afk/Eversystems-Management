@@ -46,6 +46,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     )
   }
 
+  // Sequential-period guard (6E.9): IPCs are cumulative-minus-previous, so a period earlier
+  // than the latest CERTIFIED one would double-bill — the earlier certificate re-bills work
+  // the later one already billed. A correction to an earlier month is a RE-ISSUE of that month.
+  const latestCertified = await prisma.valuation.findFirst({
+    where: { projectId: project.id, status: 'CERTIFIED' },
+    orderBy: { periodMonth: 'desc' },
+    select: { periodMonth: true },
+  })
+  if (latestCertified && periodMonth < latestCertified.periodMonth) {
+    return NextResponse.json(
+      { error: `Valuations are sequential: this month is earlier than the latest certified period (${latestCertified.periodMonth.toISOString().slice(0, 10)}). To correct an earlier month, re-issue that month's certificate instead.` },
+      { status: 409 },
+    )
+  }
+
   const computed = await computeValuation(project.id, body.periodMonth)
   if (!computed) return NextResponse.json({ error: 'Project not found.' }, { status: 404 })
 

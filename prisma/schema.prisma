@@ -86,6 +86,12 @@ enum AuditAction {
   VALUATION_SUBMITTED
   VALUATION_CERTIFIED
   VALUATION_REISSUED
+  VALUATION_INVOICED
+  BANK_ACCOUNT_CREATED
+  BANK_ACCOUNT_UPDATED
+  CASH_TXN_CREATED
+  CASH_TXN_UPDATED
+  CASH_TXN_DELETED
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -142,13 +148,14 @@ model Project {
   plannedStart     DateTime? @db.Date
   plannedEnd       DateTime? @db.Date
 
-  members    ProjectMember[]
-  reports    DailyReport[]
-  counters   ReportCounter[]
-  assets     Asset[]
-  baseline   BaselinePeriod[]
-  valuations Valuation[]
-  expenses   Expense[]
+  members          ProjectMember[]
+  reports          DailyReport[]
+  counters         ReportCounter[]
+  assets           Asset[]
+  baseline         BaselinePeriod[]
+  valuations       Valuation[]
+  expenses         Expense[]
+  cashTransactions CashTransaction[] // Phase 6E: cash movements allocated to this project
 }
 
 model ProjectMember {
@@ -601,8 +608,14 @@ model Valuation {
   revisionNumber Int       @default(0)
   supersededAt   DateTime?
 
+  // `status` is the CERTIFICATION machine (DRAFT → SUBMITTED → CERTIFIED). Phase 6E NEVER
+  // writes it: the prior-period lookups filter on status='CERTIFIED', so advancing a paid
+  // certificate to INVOICED/PAID would drop it from that lookup and silently re-bill it.
+  // The INVOICED/PAID enum values are therefore intentionally vestigial — payment state is
+  // DERIVED from invoicedAt + matched receipts (Phase 6E), never from status.
   status          ValuationStatus @default(DRAFT)
   certifiedAt     DateTime?
+  invoicedAt      DateTime?       @db.Date // Phase 6E — the one manual payment-side step
   expectedReceipt DateTime?       @db.Date
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
@@ -645,7 +658,8 @@ model Expense {
   createdAt   DateTime        @default(now())
   createdBy   String
 
-  project Project? @relation(fields: [projectId], references: [id])
+  project  Project?          @relation(fields: [projectId], references: [id])
+  payments CashTransaction[] // Phase 6E: cash movements that settled this expense
 
   @@index([projectId, expenseDate])
 }
@@ -657,27 +671,41 @@ model BankAccount {
   openingBalance Decimal  @db.Decimal(18, 3)
   openingDate    DateTime @db.Date
   isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now()) // Phase 6E — house pattern
+  createdBy      String   // Phase 6E
 
   transactions CashTransaction[]
 }
 
+// Phase 6E: a manual record of money moving through a bank account. Unlike a valuation
+// (a document issued to a client, frozen at certify), a ledger line is a typo waiting to be
+// corrected — it is editable and deletable by ADMIN, and the audit log is its history.
+// `direction` is DERIVED server-side from `category` (every category has one valid direction),
+// so a client-supplied direction is ignored — the OUT+VALUATION_RECEIPT contradiction class
+// cannot occur.
 model CashTransaction {
   id          String        @id @default(cuid())
   accountId   String
   txnDate     DateTime      @db.Date
-  direction   CashDirection
+  direction   CashDirection // derived from category, never trusted from the client
   category    CashCategory
-  amount      Decimal       @db.Decimal(18, 3)
+  amount      Decimal       @db.Decimal(18, 3) // always > 0; direction carries the sign
   description String
   projectId   String?
   valuationId String?
   expenseId   String?
+  clearedAt   DateTime?     @db.Date // Phase 6E — null = pending (entered, not yet on the statement)
   createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt // Phase 6E
   createdBy   String
 
   account   BankAccount @relation(fields: [accountId], references: [id])
   valuation Valuation?  @relation(fields: [valuationId], references: [id])
+  project   Project?    @relation(fields: [projectId], references: [id]) // Phase 6E — was a bare String
+  expense   Expense?    @relation(fields: [expenseId], references: [id]) // Phase 6E — was a bare String
 
   @@index([accountId, txnDate])
   @@index([projectId])
+  @@index([valuationId]) // Phase 6E
+  @@index([expenseId]) // Phase 6E
 }

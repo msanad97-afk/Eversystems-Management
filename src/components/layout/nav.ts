@@ -17,6 +17,7 @@ export const SIDEBAR_ITEMS: NavItem[] = [
   { label: 'Reports', href: '/admin/reports', roles: ['ADMIN', 'VIEWER'] },
   { label: 'Users', href: '/admin/users', roles: ['ADMIN'] },
   { label: 'Projects', href: '/admin/projects', roles: ['ADMIN'] },
+  { label: 'Cash', href: '/admin/cash', roles: ['ADMIN'] },
   { label: 'Catalogs', href: '/admin/catalogs', roles: ['ADMIN'] },
 ]
 
