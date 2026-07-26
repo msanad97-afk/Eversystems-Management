@@ -56,7 +56,7 @@ export function AgeingSummaryPanel({ ageing }: { ageing: AgeingSummary }) {
     <section className="space-y-2">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Receivables ageing</h2>
-        <Link href="/admin/cash" className="text-xs font-medium text-primary hover:underline">Open Cash →</Link>
+        <Link href="/admin/cash" className="text-xs font-medium text-primary-700 hover:underline">Open Cash →</Link>
       </div>
       <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {BUCKET_ORDER.map((b) => (
@@ -167,7 +167,7 @@ export function PortfolioTable({
             {sorted.map((p) => (
               <TR key={p.projectId}>
                 <TD>
-                  <Link href={`/admin/projects/${p.projectId}`} className="font-medium text-primary hover:underline">{p.projectName}</Link>
+                  <Link href={`/admin/projects/${p.projectId}`} className="font-medium text-primary-700 hover:underline">{p.projectName}</Link>
                   {p.unpricedCount > 0 && <Badge tone="warning" className="ml-2">unpriced</Badge>}
                 </TD>
                 <TD className="text-right tabular-nums">{bhd0(p.contractValue)}</TD>

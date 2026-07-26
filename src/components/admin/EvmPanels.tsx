@@ -98,7 +98,7 @@ export function AssetEvmTable({ assets, projectId }: { assets: EvmNode[]; projec
               <TD className={`text-right tabular-nums ${a.vac < 0 ? 'text-danger' : ''}`}>{bhd0(a.vac)}</TD>
               <TD className="text-right tabular-nums">{a.pctComplete}%</TD>
               <TD>
-                <Link href={`/admin/projects/${projectId}/performance?assetId=${a.id}`} className="text-xs font-medium text-primary hover:underline">
+                <Link href={`/admin/projects/${projectId}/performance?assetId=${a.id}`} className="text-xs font-medium text-primary-700 hover:underline">
                   Activities
                 </Link>
               </TD>

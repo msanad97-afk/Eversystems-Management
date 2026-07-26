@@ -80,7 +80,7 @@ export function ValuationList({ projectId, valuations }: { projectId: string; va
           {valuations.map((v) => (
             <TR key={v.id}>
               <TD>
-                <Link href={`/admin/projects/${projectId}/valuations/${v.id}`} className="font-medium text-primary hover:underline">
+                <Link href={`/admin/projects/${projectId}/valuations/${v.id}`} className="font-medium text-primary-700 hover:underline">
                   {monthLabel(v.periodMonth)}
                 </Link>
               </TD>
@@ -191,7 +191,7 @@ export function RevisionHistoryStrip({
             {h.id === currentId ? (
               <span className="text-xs font-medium text-fg-subtle">viewing</span>
             ) : (
-              <Link href={`/admin/projects/${projectId}/valuations/${h.id}`} className="text-xs font-medium text-primary hover:underline">
+              <Link href={`/admin/projects/${projectId}/valuations/${h.id}`} className="text-xs font-medium text-primary-700 hover:underline">
                 open
               </Link>
             )}

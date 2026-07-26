@@ -58,7 +58,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
   return (
     <div className="space-y-5">
       <div>
-        <Link href="/admin/projects" className="text-sm font-medium text-primary hover:underline">
+        <Link href="/admin/projects" className="text-sm font-medium text-primary-700 hover:underline">
           ← Projects
         </Link>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
@@ -72,13 +72,13 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
           <div className="flex flex-wrap gap-2">
             <Link
               href={`/admin/projects/${project.id}/valuations`}
-              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-muted"
+              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-primary-700 hover:bg-surface-muted"
             >
               Valuations →
             </Link>
             <Link
               href={`/admin/projects/${project.id}/performance`}
-              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-muted"
+              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-primary-700 hover:bg-surface-muted"
             >
               Performance (EVM) →
             </Link>

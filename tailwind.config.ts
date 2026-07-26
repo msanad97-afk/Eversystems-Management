@@ -34,7 +34,12 @@ const config: Config = {
         },
         success: { DEFAULT: status.success, bg: status.successBg },
         warning: { DEFAULT: status.warning, bg: status.warningBg },
-        danger: { DEFAULT: status.danger, bg: status.dangerBg },
+        danger: {
+          DEFAULT: status.danger,
+          bg: status.dangerBg,
+          strong: status.dangerStrong,
+          soft: status.dangerSoft,
+        },
         info: { DEFAULT: status.info, bg: status.infoBg },
       },
       fontFamily: {

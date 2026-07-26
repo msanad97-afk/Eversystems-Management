@@ -142,7 +142,7 @@ export function ReviewClient({ items }: { items: ReviewItem[] }) {
                 <TD className="whitespace-nowrap text-fg-muted">{fmtTime(r.submittedAt)}</TD>
                 <TD><ReportStatusBadge status={r.status} /></TD>
                 <TD>
-                  <Link href={`/reports/${r.id}`} className="text-sm font-medium text-primary hover:underline">
+                  <Link href={`/reports/${r.id}`} className="text-sm font-medium text-primary-700 hover:underline">
                     Open
                   </Link>
                 </TD>

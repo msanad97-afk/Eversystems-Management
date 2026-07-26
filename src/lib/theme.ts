@@ -1,26 +1,26 @@
 /**
  * Design tokens — single source of truth for the Eversystems Management brand.
  *
- * Inherited (per spec) from the Binaa PMIS theme system: Inter + JetBrains Mono,
- * #C42217 primary. No colour, radius, or font is hardcoded in components — every
- * value flows from here into Tailwind (tailwind.config.ts) and CSS variables
- * (globals.css). Change a value here and it changes everywhere.
+ * Inter + JetBrains Mono, Eversystems green #598C71 primary (sampled from the
+ * official ES logo). No colour, radius, or font is hardcoded in components —
+ * every value flows from here into Tailwind (tailwind.config.ts) and CSS
+ * variables (globals.css). Change a value here and it changes everywhere.
  */
 
 export const brand = {
-  /** Primary brand red — the cross Logo colour. */
-  primary: '#C42217',
+  /** Primary brand green — sampled from the official Eversystems logo. */
+  primary: '#598C71',
   primaryHex: {
-    50: '#FCEBEA',
-    100: '#F8D0CD',
-    200: '#F0A29C',
-    300: '#E7736A',
-    400: '#DE4539',
-    500: '#C42217', // brand
-    600: '#A61B12',
-    700: '#82150E',
-    800: '#5E0F0A',
-    900: '#3B0906',
+    50: '#EAF1ED', // tint: badge bg, selected rows, subtle fills
+    100: '#D6E3DB',
+    200: '#B3CBBE',
+    300: '#8FB3A0', // disabled fill
+    400: '#6E9A82',
+    500: '#598C71', // brand
+    600: '#47715B', // hover / pressed
+    700: '#3A5C4A', // small green text / active-nav / badge text (AA on white + tint)
+    800: '#2C4638',
+    900: '#1F3227',
   },
 } as const
 
@@ -39,7 +39,13 @@ export const neutral = {
   900: '#1A1917',
 } as const
 
-/** Semantic status colours (badges, alerts, traffic lights later). */
+/**
+ * Semantic status colours (badges, alerts, traffic lights). Unchanged by the
+ * brand rebrand and kept visually distinct from the brand green. `dangerStrong`
+ * / `dangerSoft` are the hover / disabled shades for red (danger) buttons — they
+ * live in the danger scale, not the brand ramp, so recolouring the brand never
+ * turns a danger control green.
+ */
 export const status = {
   success: '#1E874B',
   successBg: '#E7F4EC',
@@ -47,6 +53,8 @@ export const status = {
   warningBg: '#FBF3E0',
   danger: '#C42217',
   dangerBg: '#FCEBEA',
+  dangerStrong: '#82150E', // danger button hover / pressed
+  dangerSoft: '#E7736A', // danger button disabled
   info: '#2563A8',
   infoBg: '#E7EFF8',
 } as const

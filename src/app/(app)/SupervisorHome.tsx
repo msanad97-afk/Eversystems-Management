@@ -144,7 +144,7 @@ export function SupervisorHome({
           <button
             type="button"
             onClick={() => setPrevOpen(true)}
-            className="text-sm font-medium text-primary hover:underline"
+            className="text-sm font-medium text-primary-700 hover:underline"
           >
             Report a previous day
           </button>

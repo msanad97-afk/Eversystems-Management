@@ -37,19 +37,20 @@ export interface ReportPdfData {
 
 // The app is English-only: all report text is left-to-right Latin, rendered with Inter.
 
-const RED = '#C42217'
+const BRAND = '#598C71' // logo mark tile
+const BRAND_TEXT = '#47715B' // headings/accents — darker green for AA as small text on white
 const styles = StyleSheet.create({
   page: { paddingHorizontal: 40, paddingVertical: 36, fontFamily: 'Inter', fontSize: 10, color: '#1A1917' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   brandName: { fontSize: 14, fontWeight: 600 },
   brandSub: { fontSize: 9, color: '#5A5852' },
-  title: { fontSize: 16, fontWeight: 600, color: RED },
+  title: { fontSize: 16, fontWeight: 600, color: BRAND_TEXT },
   metaBox: { borderWidth: 1, borderColor: '#E4E3E0', borderRadius: 6, padding: 10, marginBottom: 16 },
   metaRow: { flexDirection: 'row', marginBottom: 3 },
   metaLabel: { width: 90, color: '#5A5852' },
   metaValue: { flex: 1, fontWeight: 600 },
-  assetTitle: { fontSize: 11, fontWeight: 600, color: RED, marginTop: 10, marginBottom: 4, borderBottomWidth: 1, borderBottomColor: '#E4E3E0', paddingBottom: 3 },
+  assetTitle: { fontSize: 11, fontWeight: 600, color: BRAND_TEXT, marginTop: 10, marginBottom: 4, borderBottomWidth: 1, borderBottomColor: '#E4E3E0', paddingBottom: 3 },
   activityBox: { marginBottom: 8, paddingLeft: 4 },
   activityHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 },
   activityName: { fontWeight: 600 },
@@ -58,7 +59,7 @@ const styles = StyleSheet.create({
   muted: { color: '#7C7A73' },
   totals: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8, fontWeight: 600, borderTopWidth: 1, borderTopColor: '#D2D1CC', paddingTop: 4 },
   notes: { marginTop: 4, lineHeight: 1.4 },
-  sectionTitle: { fontSize: 11, fontWeight: 600, color: RED, marginTop: 10, marginBottom: 6 },
+  sectionTitle: { fontSize: 11, fontWeight: 600, color: BRAND_TEXT, marginTop: 10, marginBottom: 6 },
   signRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 30 },
   signBox: { width: '45%' },
   signLine: { borderTopWidth: 1, borderTopColor: '#A8A6A0', marginTop: 28, paddingTop: 4, fontSize: 9, color: '#5A5852' },
@@ -68,7 +69,7 @@ const styles = StyleSheet.create({
 function CrossMark() {
   return (
     <Svg width={26} height={26} viewBox="0 0 40 40">
-      <Rect x={0} y={0} width={40} height={40} rx={9} fill={RED} />
+      <Rect x={0} y={0} width={40} height={40} rx={9} fill={BRAND} />
       <Path d="M17 8h6v9h9v6h-9v9h-6v-9H8v-6h9V8z" fill="#FFFFFF" />
     </Svg>
   )

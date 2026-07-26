@@ -98,7 +98,7 @@ export function RegisterClient({
         <Input label="To" type="date" value={filters.to} onChange={(e) => setFilter({ to: e.target.value })} />
       </div>
       {hasFilters && (
-        <button type="button" onClick={() => router.push('/admin/reports')} className="text-sm text-primary hover:underline">
+        <button type="button" onClick={() => router.push('/admin/reports')} className="text-sm text-primary-700 hover:underline">
           Clear filters
         </button>
       )}
@@ -130,8 +130,8 @@ export function RegisterClient({
                 <TD>{r.workers}</TD>
                 <TD>{r.manHours}</TD>
                 <TD className="whitespace-nowrap">
-                  <Link href={`/reports/${r.id}`} className="text-sm font-medium text-primary hover:underline">Open</Link>
-                  <a href={`/api/reports/${r.id}/pdf`} target="_blank" rel="noreferrer" className="ml-3 text-sm font-medium text-primary hover:underline">PDF</a>
+                  <Link href={`/reports/${r.id}`} className="text-sm font-medium text-primary-700 hover:underline">Open</Link>
+                  <a href={`/api/reports/${r.id}/pdf`} target="_blank" rel="noreferrer" className="ml-3 text-sm font-medium text-primary-700 hover:underline">PDF</a>
                 </TD>
               </TR>
             ))}

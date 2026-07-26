@@ -51,7 +51,7 @@ export default async function PerformancePage({
   return (
     <div className="space-y-5">
       <div>
-        <Link href={`/admin/projects/${project.id}`} className="text-sm font-medium text-primary hover:underline">
+        <Link href={`/admin/projects/${project.id}`} className="text-sm font-medium text-primary-700 hover:underline">
           ← {project.name}
         </Link>
         <h1 className="mt-1 text-xl font-semibold text-fg">Performance</h1>
@@ -78,7 +78,7 @@ export default async function PerformancePage({
           {drill && (
             <section className="space-y-2">
               <ActivityEvmTable assetName={drill.assetName} activities={drill.activities} />
-              <Link href={`/admin/projects/${project.id}/performance`} className="text-xs font-medium text-primary hover:underline">
+              <Link href={`/admin/projects/${project.id}/performance`} className="text-xs font-medium text-primary-700 hover:underline">
                 ← Back to all assets
               </Link>
             </section>

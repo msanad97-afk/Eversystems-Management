@@ -52,7 +52,7 @@ function shell(bodyHtml: string): string {
   return `<div style="font-family: Inter, Arial, sans-serif; color: #1A1917; line-height: 1.5;">${bodyHtml}</div>`
 }
 function button(href: string, label: string): string {
-  return `<p><a href="${href}" style="display:inline-block;background:#C42217;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;">${label}</a></p>`
+  return `<p><a href="${href}" style="display:inline-block;background:#598C71;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;">${label}</a></p>`
 }
 
 export interface ReportEmailContext {
@@ -120,7 +120,7 @@ export async function sendPasswordResetEmail(params: {
     <div style="font-family: Inter, Arial, sans-serif; color: #1A1917; line-height: 1.5;">
       <p>Hello ${params.firstName},</p>
       <p>A password reset was requested for your Eversystems Management account.</p>
-      <p><a href="${link}" style="display:inline-block;background:#C42217;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;">Set a new password</a></p>
+      <p><a href="${link}" style="display:inline-block;background:#598C71;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;">Set a new password</a></p>
       <p style="color:#5A5852;font-size:13px;">Or paste this link into your browser:<br>${link}</p>
       <p style="color:#5A5852;font-size:13px;">This link expires in 1 hour. If you didn't request this, you can ignore this email.</p>
     </div>

@@ -40,7 +40,7 @@ export default async function ValuationDetailPage({ params }: { params: { id: st
   return (
     <div className="space-y-5">
       <div>
-        <Link href={`/admin/projects/${project.id}/valuations`} className="text-sm font-medium text-primary hover:underline">
+        <Link href={`/admin/projects/${project.id}/valuations`} className="text-sm font-medium text-primary-700 hover:underline">
           ← Valuations
         </Link>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-3">

@@ -244,7 +244,7 @@ function RateEditor({
           <button type="button" onClick={() => onChange(lines.filter((_, j) => j !== i))} className="text-fg-subtle hover:text-danger" aria-label="Remove line">✕</button>
         </div>
       ))}
-      <button type="button" onClick={() => onChange([...lines, { key: nextKey(), id: '', value: '' }])} className="text-xs font-medium text-primary hover:underline">
+      <button type="button" onClick={() => onChange([...lines, { key: nextKey(), id: '', value: '' }])} className="text-xs font-medium text-primary-700 hover:underline">
         + Add {title.toLowerCase()} line
       </button>
     </div>

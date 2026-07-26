@@ -18,7 +18,7 @@ export function BottomNav() {
             key={item.href}
             href={item.href}
             className={`flex flex-1 flex-col items-center justify-center gap-0.5 py-2.5 text-xs font-medium ${
-              active ? 'text-primary' : 'text-fg-subtle'
+              active ? 'text-primary-700' : 'text-fg-subtle'
             }`}
           >
             {item.label}

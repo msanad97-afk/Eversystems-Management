@@ -15,7 +15,7 @@ const VARIANTS: Record<Variant, string> = {
   primary: 'bg-primary text-fg-inverted hover:bg-primary-600 disabled:bg-primary-300',
   secondary:
     'bg-surface text-fg border border-border-strong hover:bg-surface-muted disabled:opacity-50',
-  danger: 'bg-danger text-fg-inverted hover:bg-primary-700 disabled:bg-primary-300',
+  danger: 'bg-danger text-fg-inverted hover:bg-danger-strong disabled:bg-danger-soft',
   ghost: 'bg-transparent text-fg-muted hover:bg-surface-muted disabled:opacity-50',
 }
 

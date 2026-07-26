@@ -98,7 +98,7 @@ export default async function ReportPage({ params }: { params: { id: string } })
     <div className="space-y-4">
       {canReview && <ReviewActions reportId={report.id} />}
       <div className="flex justify-end">
-        <a href={`/api/reports/${report.id}/pdf`} target="_blank" rel="noreferrer" className="text-sm font-medium text-primary hover:underline">Download PDF</a>
+        <a href={`/api/reports/${report.id}/pdf`} target="_blank" rel="noreferrer" className="text-sm font-medium text-primary-700 hover:underline">Download PDF</a>
       </div>
       <ReportReadOnlyView
         canRecall={isAuthor && report.status === 'SUBMITTED'}

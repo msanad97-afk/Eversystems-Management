@@ -40,7 +40,7 @@ export default async function ValuationsPage({ params }: { params: { id: string 
   return (
     <div className="space-y-5">
       <div>
-        <Link href={`/admin/projects/${project.id}`} className="text-sm font-medium text-primary hover:underline">
+        <Link href={`/admin/projects/${project.id}`} className="text-sm font-medium text-primary-700 hover:underline">
           ← {project.name}
         </Link>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-2">

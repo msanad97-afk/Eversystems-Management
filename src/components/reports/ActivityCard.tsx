@@ -201,7 +201,7 @@ function ManpowerEditor({ rows, categories, onChange }: { rows: ManRow[]; catego
           <button type="button" onClick={() => onChange(rows.filter((_, j) => j !== i))} className="text-fg-subtle hover:text-danger" aria-label="Remove manpower row">✕</button>
         </div>
       ))}
-      <button type="button" onClick={() => onChange([...rows, { key: newKey(), categoryId: '', headcount: '', hours: '' }])} className="text-xs font-medium text-primary hover:underline">+ Add trade</button>
+      <button type="button" onClick={() => onChange([...rows, { key: newKey(), categoryId: '', headcount: '', hours: '' }])} className="text-xs font-medium text-primary-700 hover:underline">+ Add trade</button>
     </div>
   )
 }
@@ -224,7 +224,7 @@ function MaterialEditor({ rows, materials, onChange }: { rows: MatRow[]; materia
           </div>
         )
       })}
-      <button type="button" onClick={() => onChange([...rows, { key: newKey(), materialId: '', quantity: '' }])} className="text-xs font-medium text-primary hover:underline">+ Add material</button>
+      <button type="button" onClick={() => onChange([...rows, { key: newKey(), materialId: '', quantity: '' }])} className="text-xs font-medium text-primary-700 hover:underline">+ Add material</button>
     </div>
   )
 }
