@@ -1,0 +1,9 @@
+# Treat binary assets as binary so line-ending normalisation never corrupts them.
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
