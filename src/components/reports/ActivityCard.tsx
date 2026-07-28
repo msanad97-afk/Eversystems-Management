@@ -181,7 +181,14 @@ function SubLine({
       )}
 
       <ManpowerEditor rows={sub.manpower} categories={categories} onChange={(manpower) => onChange({ ...sub, manpower })} />
-      <MaterialEditor rows={sub.materials} materials={materials} onChange={(rows) => onChange({ ...sub, materials: rows })} />
+      <MaterialEditor
+        rows={sub.materials}
+        materials={materials}
+        budgetMaterials={opt.budgetMaterials}
+        boqQuantity={opt.boqQuantity}
+        quantityDoneToday={Number(sub.quantityDone) || 0}
+        onChange={(rows) => onChange({ ...sub, materials: rows })}
+      />
     </div>
   )
 }
@@ -206,21 +213,79 @@ function ManpowerEditor({ rows, categories, onChange }: { rows: ManRow[]; catego
   )
 }
 
-function MaterialEditor({ rows, materials, onChange }: { rows: MatRow[]; materials: MaterialOption[]; onChange: (rows: MatRow[]) => void }) {
+/** Quantity display: ≤1 decimal, trailing ".0" dropped ("6", "6.5"). Never implies false precision. */
+function fmtQty(n: number): string {
+  return String(Math.round(n * 10) / 10)
+}
+
+/**
+ * Muted, quantities-only budget line under a material row (supervisor visibility). No money, no
+ * colour alarms. `used` folds the live draft quantity onto approved history so it tracks what
+ * the supervisor is typing; `expected for today` shows only once today's quantity is entered.
+ */
+function MaterialBudgetLine({
+  budget,
+  liveQty,
+  boqQuantity,
+  quantityDoneToday,
+}: {
+  budget: SubActivityOption['budgetMaterials'][number] | undefined
+  liveQty: number
+  boqQuantity: number
+  quantityDoneToday: number
+}) {
+  if (!budget) {
+    return <p className="mt-0.5 pl-0.5 text-[11px] text-fg-subtle">not budgeted</p>
+  }
+  const budgetedTotal = budget.qtyPerUnit * boqQuantity
+  const used = budget.approvedConsumed + liveQty
+  const remaining = budgetedTotal - used
+  const remainingLabel = remaining >= 0 ? `${fmtQty(remaining)} left` : `${fmtQty(-remaining)} over`
+  const expectedClause =
+    quantityDoneToday > 0 ? ` · ~${fmtQty(budget.qtyPerUnit * quantityDoneToday)} expected for today` : ''
+  return (
+    <p className="mt-0.5 pl-0.5 text-[11px] tabular-nums text-fg-subtle">
+      {fmtQty(used)} of {fmtQty(budgetedTotal)} {budget.unit} used · {remainingLabel}{expectedClause}
+    </p>
+  )
+}
+
+function MaterialEditor({
+  rows,
+  materials,
+  budgetMaterials,
+  boqQuantity,
+  quantityDoneToday,
+  onChange,
+}: {
+  rows: MatRow[]
+  materials: MaterialOption[]
+  budgetMaterials: SubActivityOption['budgetMaterials']
+  boqQuantity: number
+  quantityDoneToday: number
+  onChange: (rows: MatRow[]) => void
+}) {
   return (
     <div className="space-y-1">
       <p className="text-xs font-semibold uppercase tracking-wide text-fg-subtle">Materials</p>
       {rows.map((r, i) => {
         const mat = materials.find((m) => m.id === r.materialId)
+        const budget = r.materialId ? budgetMaterials.find((b) => b.materialId === r.materialId) : undefined
         return (
-          <div key={r.key} className="flex items-center gap-2">
-            <select value={r.materialId} onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, materialId: e.target.value } : x)))} className="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-fg">
-              <option value="">Material…</option>
-              {materials.map((m) => (<option key={m.id} value={m.id}>{m.name}{m.isActive ? '' : ' (inactive)'}</option>))}
-            </select>
-            <input type="number" inputMode="decimal" min={0} step="any" placeholder="Qty" value={r.quantity} onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))} className="w-20 rounded-md border border-border bg-surface px-2 py-1.5 text-sm tabular-nums text-fg" />
-            <span className="w-10 text-xs text-fg-subtle">{mat?.unit ?? ''}</span>
-            <button type="button" onClick={() => onChange(rows.filter((_, j) => j !== i))} className="text-fg-subtle hover:text-danger" aria-label="Remove material row">✕</button>
+          <div key={r.key}>
+            <div className="flex items-center gap-2">
+              <select value={r.materialId} onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, materialId: e.target.value } : x)))} className="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-fg">
+                <option value="">Material…</option>
+                {materials.map((m) => (<option key={m.id} value={m.id}>{m.name}{m.isActive ? '' : ' (inactive)'}</option>))}
+              </select>
+              <input type="number" inputMode="decimal" min={0} step="any" placeholder="Qty" value={r.quantity} onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))} className="w-20 rounded-md border border-border bg-surface px-2 py-1.5 text-sm tabular-nums text-fg" />
+              <span className="w-10 text-xs text-fg-subtle">{mat?.unit ?? ''}</span>
+              <button type="button" onClick={() => onChange(rows.filter((_, j) => j !== i))} className="text-fg-subtle hover:text-danger" aria-label="Remove material row">✕</button>
+            </div>
+            {/* Budget visibility: measured lines only (lumpsum subs have no BOQ quantity). */}
+            {r.materialId !== '' && boqQuantity > 0 && (
+              <MaterialBudgetLine budget={budget} liveQty={Number(r.quantity) || 0} boqQuantity={boqQuantity} quantityDoneToday={quantityDoneToday} />
+            )}
           </div>
         )
       })}

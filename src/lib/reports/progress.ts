@@ -37,6 +37,33 @@ async function sumBySubActivity(
   return out
 }
 
+/**
+ * Σ approved MaterialEntry.quantity per (sub-activity, material) — the "used so far" that
+ * drives supervisor material-budget visibility. APPROVED-only by spec: the current report is
+ * a DRAFT/REJECTED being edited, so it is excluded here and its own line is folded in live on
+ * the client. SELECTS ONLY quantity/materialId/subActivityId — never the MaterialEntry cost
+ * snapshots (rateAtApproval/costAtApproval), so no price crosses the supervisor wall.
+ * Keyed `${subActivityId}:${materialId}`.
+ */
+async function approvedMaterialConsumption(subActivityIds: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  if (subActivityIds.length === 0) return out
+  const rows = await prisma.materialEntry.findMany({
+    where: {
+      reportSubActivity: {
+        subActivityId: { in: subActivityIds },
+        reportActivity: { report: { status: 'APPROVED' } },
+      },
+    },
+    select: { materialId: true, quantity: true, reportSubActivity: { select: { subActivityId: true } } },
+  })
+  for (const r of rows) {
+    const key = `${r.reportSubActivity.subActivityId}:${r.materialId}`
+    out.set(key, (out.get(key) ?? 0) + Number(r.quantity))
+  }
+  return out
+}
+
 /** Latest cumulative % per lumpsum sub-activity (most recent report by date) over statuses. */
 async function latestPercentBySubActivity(
   subActivityIds: string[],
@@ -80,7 +107,9 @@ export interface FormSubActivity {
   lastApprovedPercent: number // floor for the % input (no regression)
   // pre-fill from the snapshotted budget (measured only)
   budgetManpower: { categoryId: string; categoryName: string; hoursPerUnit: number }[]
-  budgetMaterials: { materialId: string; materialName: string; unit: string; qtyPerUnit: number }[]
+  // qtyPerUnit + approvedConsumed (used-so-far) drive supervisor material-budget visibility.
+  // No cost field is ever projected here — the money wall holds.
+  budgetMaterials: { materialId: string; materialName: string; unit: string; qtyPerUnit: number; approvedConsumed: number }[]
 }
 export interface FormActivity {
   id: string
@@ -102,7 +131,16 @@ const scopeSubInclude = {
   orderBy: { sortOrder: 'asc' as const },
   include: {
     manpowerBudget: { include: { category: { select: { id: true, name: true } } } },
-    materialBudget: { include: { material: { select: { id: true, name: true, unit: true } } } },
+    // Money wall: SELECT (never include) — project only the quantity rate + material identity.
+    // `include` would pull every column of SubActivityMaterialBudget, including
+    // costRateAtPlacement; an explicit field list guarantees no price is even fetched.
+    materialBudget: {
+      select: {
+        materialId: true,
+        qtyPerUnit: true,
+        material: { select: { id: true, name: true, unit: true } },
+      },
+    },
   },
 }
 
@@ -129,10 +167,11 @@ export async function loadFormScope(projectId: string, excludeReportId?: string)
   const measuredIds = allSubs.filter((s) => s.type === 'MEASURED').map((s) => s.id)
   const lumpsumIds = allSubs.filter((s) => s.type === 'LUMPSUM').map((s) => s.id)
 
-  const [committed, earned, floor] = await Promise.all([
+  const [committed, earned, floor, consumed] = await Promise.all([
     sumBySubActivity(measuredIds, COMMITTED, excludeReportId),
     sumBySubActivity(measuredIds, EARNED),
     latestPercentBySubActivity(lumpsumIds, EARNED),
+    approvedMaterialConsumption(measuredIds),
   ])
 
   return assets.map((asset) => ({
@@ -152,7 +191,7 @@ export async function loadFormScope(projectId: string, excludeReportId?: string)
             lumpsumBhd: s.lumpsumBhd == null ? null : Number(s.lumpsumBhd),
             lastApprovedPercent: floor.get(s.id) ?? 0,
             budgetManpower: s.manpowerBudget.map((b) => ({ categoryId: b.category.id, categoryName: b.category.name, hoursPerUnit: Number(b.hoursPerUnit) })),
-            budgetMaterials: s.materialBudget.map((b) => ({ materialId: b.material.id, materialName: b.material.name, unit: b.material.unit, qtyPerUnit: Number(b.qtyPerUnit) })),
+            budgetMaterials: s.materialBudget.map((b) => ({ materialId: b.material.id, materialName: b.material.name, unit: b.material.unit, qtyPerUnit: Number(b.qtyPerUnit), approvedConsumed: consumed.get(`${s.id}:${b.materialId}`) ?? 0 })),
           }
         }),
       }

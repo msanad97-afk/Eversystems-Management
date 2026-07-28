@@ -53,7 +53,8 @@ export interface SubActivityOption {
   lumpsumBhd: number | null
   lastApprovedPercent: number
   budgetManpower: { categoryId: string; categoryName: string; hoursPerUnit: number }[]
-  budgetMaterials: { materialId: string; materialName: string; unit: string; qtyPerUnit: number }[]
+  // qtyPerUnit + approvedConsumed drive the supervisor material-budget line (quantities only, no cost).
+  budgetMaterials: { materialId: string; materialName: string; unit: string; qtyPerUnit: number; approvedConsumed: number }[]
 }
 export interface ActivityOption {
   id: string
