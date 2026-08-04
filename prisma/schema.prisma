@@ -12,7 +12,7 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL") // POOLED (Neon pooler) — serverless runtime
-  directUrl = env("DIRECT_URL")   // UNPOOLED — prisma migrate/introspect
+  directUrl = env("DIRECT_URL") // UNPOOLED — prisma migrate/introspect
 }
 
 // ─── ENUMS ──────────────────────────────────────────────────────────────────
@@ -95,6 +95,10 @@ enum AuditAction {
   CASH_TXN_CREATED
   CASH_TXN_UPDATED
   CASH_TXN_DELETED
+  MATERIAL_REQUEST_CREATED
+  MATERIAL_REQUEST_SUBMITTED
+  MATERIAL_REQUEST_RECALLED
+  MATERIAL_REQUEST_REVIEWED
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -122,6 +126,9 @@ model User {
   reports   DailyReport[]   @relation("ReportAuthor")
   reviews   DailyReport[]   @relation("ReportReviewer")
   auditLogs AuditLog[]
+
+  materialRequestsRaised   MaterialRequest[] @relation("MReqRequester")
+  materialRequestsReviewed MaterialRequest[] @relation("MReqReviewer")
 }
 
 // ─── PROJECTS (SITES) ──────────────────────────────────────────────────────────
@@ -139,22 +146,22 @@ model Project {
 
   // ─── Financials (Phase 6). Nullable; unused until then. ───
   // Money amounts carry 3 decimals (BHD fils), consistent with all BHD fields.
-  contractValue    Decimal?  @db.Decimal(18, 3)
-  currency         String    @default("BHD")
-  budgetCost       Decimal?  @db.Decimal(18, 3)
-  retentionPct     Decimal?  @db.Decimal(5, 2)
+  contractValue            Decimal?  @db.Decimal(18, 3)
+  currency                 String    @default("BHD")
+  budgetCost               Decimal?  @db.Decimal(18, 3)
+  retentionPct             Decimal?  @db.Decimal(5, 2)
   // Phase 6D: retention stops accruing once held retention reaches this % of contract value.
   // Null = uncapped (retentionPct applies to cumulative gross without limit).
-  retentionCapPct  Decimal?  @db.Decimal(5, 2)
-  advancePct       Decimal?  @db.Decimal(5, 2)
-  paymentTermsDays Int?      @default(45)
-  plannedStart     DateTime? @db.Date
-  plannedEnd       DateTime? @db.Date
+  retentionCapPct          Decimal?  @db.Decimal(5, 2)
+  advancePct               Decimal?  @db.Decimal(5, 2)
+  paymentTermsDays         Int?      @default(45)
+  plannedStart             DateTime? @db.Date
+  plannedEnd               DateTime? @db.Date
   // Phase 8: retention release. Held retention is derived from certificates (6D); a release is
   // a manual RETENTION_RELEASE cash receipt. These drive the presentational release tranches.
-  practicalCompletionDate  DateTime? @db.Date          // trigger for tranche 1
-  defectsLiabilityMonths   Int?      @default(12)       // tranche 2 due = PC date + this
-  retentionFirstReleasePct Decimal?  @db.Decimal(5, 2) @default(50) // % released at PC
+  practicalCompletionDate  DateTime? @db.Date // trigger for tranche 1
+  defectsLiabilityMonths   Int?      @default(12) // tranche 2 due = PC date + this
+  retentionFirstReleasePct Decimal?  @default(50) @db.Decimal(5, 2) // % released at PC
 
   members          ProjectMember[]
   reports          DailyReport[]
@@ -164,6 +171,7 @@ model Project {
   valuations       Valuation[]
   expenses         Expense[]
   cashTransactions CashTransaction[] // Phase 6E: cash movements allocated to this project
+  materialRequests MaterialRequest[]
 }
 
 model ProjectMember {
@@ -204,6 +212,7 @@ model Material {
   entries            MaterialEntry[]
   catalogRates       CatalogMaterialRate[]
   subActivityBudgets SubActivityMaterialBudget[]
+  requestLines       MaterialRequestLine[]
 }
 
 // ─── CATALOG ACTIVITIES (Rev 2) ───────────────────────────────────────────────
@@ -324,21 +333,22 @@ model Asset {
   // lump-sum stream certifies at 0 and the certify gate blocks.
   lumpsumRevenue Decimal? @db.Decimal(18, 3)
 
-  project    Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  activities Activity[]
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  activities       Activity[]
+  materialRequests MaterialRequest[]
 
   @@index([projectId])
 }
 
 model Activity {
-  id             String    @id @default(cuid())
-  assetId        String
-  ref            String? // optional BOQ item no., e.g. "3.2.1"
-  name           String
+  id          String    @id @default(cuid())
+  assetId     String
+  ref         String? // optional BOQ item no., e.g. "3.2.1"
+  name        String
   // Rev 2: MEASURED lines carry a unit + boqQuantity (the CAP). LUMPSUM lines carry a
   // fixed lumpsumBhd instead and have no unit (unit null, boqQuantity 0, never read).
-  type           LineType  @default(MEASURED)
-  unit           String? // required for MEASURED; null for LUMPSUM
+  type        LineType  @default(MEASURED)
+  unit        String? // required for MEASURED; null for LUMPSUM
   boqQuantity Decimal   @db.Decimal(14, 3) // contracted/planned quantity — the CAP (0 for LUMPSUM)
   // A lumpsum is a COST to complete this activity (frozen at placement). It raises BAC and
   // contributes ZERO to contract value — only billRate × boqQuantity earns revenue.
@@ -358,10 +368,11 @@ model Activity {
   costRate Decimal? @db.Decimal(14, 3) // planned cost per unit — budget / AC basis
   billRate Decimal? @db.Decimal(14, 3) // contract value per unit — PV / earned revenue
 
-  asset           Asset            @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  catalogActivity CatalogActivity? @relation(fields: [catalogActivityId], references: [id], onDelete: SetNull)
-  subActivities   SubActivity[]
-  progress        ReportActivity[]
+  asset            Asset             @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  catalogActivity  CatalogActivity?  @relation(fields: [catalogActivityId], references: [id], onDelete: SetNull)
+  subActivities    SubActivity[]
+  progress         ReportActivity[]
+  materialRequests MaterialRequest[]
 
   @@index([assetId])
   @@index([catalogActivityId])
@@ -684,7 +695,7 @@ model BankAccount {
   openingDate    DateTime @db.Date
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now()) // Phase 6E — house pattern
-  createdBy      String   // Phase 6E
+  createdBy      String // Phase 6E
 
   transactions CashTransaction[]
 }
@@ -720,4 +731,68 @@ model CashTransaction {
   @@index([projectId])
   @@index([valuationId]) // Phase 6E
   @@index([expenseId]) // Phase 6E
+}
+
+// ─── MATERIAL REQUESTS (Stage 1: request flow) ────────────────────────────────
+// A supervisor raises a request for catalogued materials against a project (optionally
+// narrowed to an asset or activity); ADMIN reviews and approves / modifies / rejects per
+// line. Quantities only — NO cost is ever stored here; management's cost view derives from
+// Material.unitRate at read time, ADMIN-only. A reviewed request is immutable (corrections
+// are a new request). Stage-2 (delivery/inventory) will attach a delivery record per line;
+// MaterialRequestLine.id is the stable anchor for that future FK — nothing built now.
+
+enum MaterialRequestStatus {
+  DRAFT // editable by the author
+  SUBMITTED // awaiting ADMIN review; author may recall to DRAFT
+  APPROVED // every line approved in full — terminal
+  PARTIALLY_APPROVED // some lines modified or rejected — terminal
+  REJECTED // every line rejected (approvedQty 0) — terminal
+}
+
+model MaterialRequest {
+  id            String                @id @default(cuid())
+  requestCode   String                @unique // MR-2026-0001 — via nextCode, immutable
+  projectId     String
+  // Scope level the supervisor picked: project-only (both null), or narrowed to an asset
+  // and/or activity. Budgeted-vs-requested is computed at whatever level was chosen.
+  assetId       String?
+  activityId    String?
+  status        MaterialRequestStatus @default(DRAFT)
+  requestedById String
+  reviewedById  String?
+  reviewedAt    DateTime?
+  reviewNote    String?
+  submittedAt   DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  project     Project               @relation(fields: [projectId], references: [id])
+  asset       Asset?                @relation(fields: [assetId], references: [id])
+  activity    Activity?             @relation(fields: [activityId], references: [id])
+  requestedBy User                  @relation("MReqRequester", fields: [requestedById], references: [id])
+  reviewedBy  User?                 @relation("MReqReviewer", fields: [reviewedById], references: [id])
+  lines       MaterialRequestLine[]
+
+  @@index([projectId])
+  @@index([status])
+  @@index([requestedById])
+}
+
+model MaterialRequestLine {
+  id           String   @id @default(cuid())
+  requestId    String
+  materialId   String
+  unit         String // frozen material unit label at request time (display)
+  requestedQty Decimal  @db.Decimal(12, 3) // what the supervisor asked for (> 0)
+  // What management approved: null until reviewed; = requestedQty unless modified; 0 = line
+  // rejected (never negative). The approved quantities become future "requested so far".
+  approvedQty  Decimal? @db.Decimal(12, 3)
+  note         String?
+  sortOrder    Int      @default(0)
+
+  request  MaterialRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  material Material        @relation(fields: [materialId], references: [id])
+
+  @@unique([requestId, materialId]) // a material appears at most once per request
+  @@index([materialId])
 }

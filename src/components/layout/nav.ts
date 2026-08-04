@@ -15,6 +15,7 @@ export const SIDEBAR_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/admin', roles: ['ADMIN'] },
   { label: 'Executive', href: '/admin/executive', roles: ['ADMIN'] },
   { label: 'Review', href: '/admin/review', roles: ['ADMIN'] },
+  { label: 'Requests', href: '/admin/requests', roles: ['ADMIN'] },
   { label: 'Reports', href: '/admin/reports', roles: ['ADMIN', 'VIEWER'] },
   { label: 'Users', href: '/admin/users', roles: ['ADMIN'] },
   { label: 'Projects', href: '/admin/projects', roles: ['ADMIN'] },
@@ -26,6 +27,7 @@ export const SIDEBAR_ITEMS: NavItem[] = [
 export const BOTTOM_NAV_ITEMS: NavItem[] = [
   { label: 'Home', href: '/', roles: ['SUPERVISOR'] },
   { label: 'My Reports', href: '/my-reports', roles: ['SUPERVISOR'] },
+  { label: 'Requests', href: '/requests', roles: ['SUPERVISOR'] },
 ]
 
 export function itemsForRole(items: NavItem[], role: Role): NavItem[] {
