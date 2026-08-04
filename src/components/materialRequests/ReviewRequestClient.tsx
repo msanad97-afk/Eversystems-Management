@@ -76,11 +76,14 @@ export function ReviewRequestClient({ id, lines }: { id: string; lines: ReviewLi
                 <div className="min-w-0">
                   <p className="font-medium text-fg">{l.materialName}</p>
                   <p className="text-sm text-fg-muted">Requested {fmtQty(l.requestedQty)} {l.unit}</p>
+                  {/* Q3: approved / pending / approving shown as three DISTINCT figures — pending
+                      never merges into the approved cumulative. */}
                   <p className="mt-1 text-[11px] tabular-nums text-fg-subtle">
                     {l.budgetedQty == null
-                      ? `no budget set · ${fmtQty(l.requestedSoFar)} approved so far`
-                      : `${fmtQty(l.requestedSoFar)} of ${fmtQty(l.budgetedQty)} ${l.unit} approved so far`}
+                      ? `no budget set · ${fmtQty(l.requestedSoFar)} approved`
+                      : `${fmtQty(l.requestedSoFar)} of ${fmtQty(l.budgetedQty)} ${l.unit} approved`}
                     {l.pending > 0 ? ` · ${fmtQty(l.pending)} pending` : ''}
+                    {` · approving ${fmtQty(appr)}`}
                   </p>
                   {l.note && <p className="mt-1 text-xs text-fg-muted">Note: {l.note}</p>}
                 </div>
