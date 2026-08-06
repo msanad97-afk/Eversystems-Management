@@ -40,7 +40,15 @@ export default withAuth(
 
 export const config = {
   matcher: [
-    // Everything except API routes, Next internals, and the public auth pages.
-    '/((?!api|_next/static|_next/image|favicon.ico|icon.svg|robots.txt|login|forgot-password|reset-password).*)',
+    // Everything except API routes, Next internals, the public auth pages, and
+    // static assets.
+    //
+    // Assets must stay outside the matcher: `authorized` fails without a token,
+    // so a gated asset URL answers with a 307 to /login and an HTML body. The
+    // login page is by definition viewed logged out, so gating the brand assets
+    // made every <img> on it render its alt text instead of the logo. Matching
+    // by extension covers everything served from public/ (logos, marks) plus
+    // Next's generated /icon.png and /apple-icon.png.
+    '/((?!api|_next/static|_next/image|robots.txt|manifest.webmanifest|login|forgot-password|reset-password|.*\\.(?:png|ico|svg|jpe?g|webp|gif|avif)$).*)',
   ],
 }
