@@ -7,23 +7,37 @@ export interface NavItem {
 }
 
 /**
- * Sidebar items shown to ADMIN / VIEWER. Only entries whose pages actually exist in
- * the current phase are listed here (Phase 1: Users + Projects). Later phases add
- * Review · Reports · Dashboard · Catalogs. Nothing broken is ever clickable.
+ * Sidebar items, shown from the `md` breakpoint up. Only entries whose pages
+ * actually exist are listed here — nothing broken is ever clickable.
+ *
+ * Supervisors are included too. Their bottom nav is `md:hidden`, so without a
+ * sidebar entry they had no navigation at all on a desktop viewport and the
+ * pages below were reachable only by typing the URL.
+ *
+ * `roles` is what keeps the two Material Requests destinations apart: the
+ * supervisor's own list (/requests) and the admin review queue
+ * (/admin/requests) never appear to the other role.
  */
 export const SIDEBAR_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/admin', roles: ['ADMIN'] },
   { label: 'Executive', href: '/admin/executive', roles: ['ADMIN'] },
   { label: 'Review', href: '/admin/review', roles: ['ADMIN'] },
-  { label: 'Requests', href: '/admin/requests', roles: ['ADMIN'] },
+  { label: 'Material Requests', href: '/admin/requests', roles: ['ADMIN'] },
   { label: 'Reports', href: '/admin/reports', roles: ['ADMIN', 'VIEWER'] },
   { label: 'Users', href: '/admin/users', roles: ['ADMIN'] },
   { label: 'Projects', href: '/admin/projects', roles: ['ADMIN'] },
   { label: 'Cash', href: '/admin/cash', roles: ['ADMIN'] },
   { label: 'Catalogs', href: '/admin/catalogs', roles: ['ADMIN'] },
+  { label: 'Home', href: '/', roles: ['SUPERVISOR'] },
+  { label: 'My Reports', href: '/my-reports', roles: ['SUPERVISOR'] },
+  { label: 'Material Requests', href: '/requests', roles: ['SUPERVISOR'] },
 ]
 
-/** Supervisor bottom-nav items (mobile): Home · My Reports (spec 4.10). */
+/**
+ * Supervisor bottom-nav items (mobile only): Home · My Reports · Requests
+ * (spec 4.10). Labels stay short here because the bar splits the viewport width
+ * evenly between them; the sidebar uses the full "Material Requests" wording.
+ */
 export const BOTTOM_NAV_ITEMS: NavItem[] = [
   { label: 'Home', href: '/', roles: ['SUPERVISOR'] },
   { label: 'My Reports', href: '/my-reports', roles: ['SUPERVISOR'] },

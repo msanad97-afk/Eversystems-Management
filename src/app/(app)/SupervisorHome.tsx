@@ -151,6 +151,24 @@ export function SupervisorHome({
         )}
       </section>
 
+      {/* Material requests — the pages were previously reachable only by URL. */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Material requests</h2>
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <p className="text-sm text-fg-muted">
+            Request materials for a project, asset or activity, and track what has been reviewed.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Link href="/requests/new">
+              <Button>New request</Button>
+            </Link>
+            <Link href="/requests">
+              <Button variant="secondary">View my requests</Button>
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* Recent reports */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">My recent reports</h2>

@@ -14,8 +14,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <div className="flex min-h-screen flex-col bg-surface-subtle">
       <Topbar user={user} />
       <div className="flex flex-1">
-        {!isSupervisor && <Sidebar role={user.role} />}
-        <main className={`flex-1 px-4 py-5 sm:px-6 ${isSupervisor ? 'pb-24' : ''}`}>
+        {/* Every role gets the sidebar from `md` up. Supervisors previously had
+            none, and their bottom nav is `md:hidden`, which left them with no
+            navigation at all on a desktop viewport. */}
+        <Sidebar role={user.role} />
+        <main className={`flex-1 px-4 py-5 sm:px-6 ${isSupervisor ? 'pb-24 md:pb-5' : ''}`}>
           <div className="mx-auto w-full max-w-4xl">{children}</div>
         </main>
       </div>

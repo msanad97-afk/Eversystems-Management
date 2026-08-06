@@ -13,7 +13,7 @@ export function Sidebar({ role }: { role: Role }) {
     <aside className="hidden w-56 shrink-0 border-r border-border bg-surface md:block">
       <nav className="flex flex-col gap-1 p-3">
         <p className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-fg-subtle">
-          Management
+          {role === 'SUPERVISOR' ? 'Menu' : 'Management'}
         </p>
         {items.length === 0 ? (
           <p className="px-3 py-2 text-sm text-fg-subtle">
