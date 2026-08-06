@@ -46,9 +46,14 @@ export const config = {
     // Assets must stay outside the matcher: `authorized` fails without a token,
     // so a gated asset URL answers with a 307 to /login and an HTML body. The
     // login page is by definition viewed logged out, so gating the brand assets
-    // made every <img> on it render its alt text instead of the logo. Matching
-    // by extension covers everything served from public/ (logos, marks) plus
-    // Next's generated /icon.png and /apple-icon.png.
-    '/((?!api|_next/static|_next/image|robots.txt|manifest.webmanifest|login|forgot-password|reset-password|.*\\.(?:png|ico|svg|jpe?g|webp|gif|avif)$).*)',
+    // made every <img> on it render its alt text instead of the logo.
+    //
+    // Assets are listed literally rather than matched by extension. An earlier
+    // version used `.*\.(?:png|ico|svg|...)$`, which relies on an end-anchor and
+    // a nested group *inside* a negative lookahead. Next re-compiles this
+    // matcher into the deployment's routing config, so keeping it to the plain
+    // literal alternation the Next docs use avoids depending on how exotic
+    // regex survives that translation. Add new public/ assets here.
+    '/((?!api|_next/static|_next/image|robots.txt|manifest.webmanifest|favicon.ico|icon.png|apple-icon.png|logo-horizontal.png|logo-horizontal-white.png|mark-32.png|mark-192.png|mark-512.png|login|forgot-password|reset-password).*)',
   ],
 }
