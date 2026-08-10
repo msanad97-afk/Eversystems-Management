@@ -5,13 +5,12 @@ import { prisma } from '@/lib/prisma'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { MaterialRequestStatusBadge } from '@/components/materialRequests/MaterialRequestStatusBadge'
+import { scopeChain } from '@/components/materialRequests/types'
 
 export const dynamic = 'force-dynamic'
 
 function scopeLabel(r: { asset: { name: string } | null; activity: { name: string } | null }): string {
-  if (r.activity) return r.activity.name
-  if (r.asset) return r.asset.name
-  return 'Whole project'
+  return scopeChain(r.asset?.name, r.activity?.name)
 }
 
 export default async function RequestsPage() {

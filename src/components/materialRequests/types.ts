@@ -43,3 +43,12 @@ export interface ExistingRequest {
 export function fmtQty(n: number): string {
   return String(Math.round(n * 1000) / 1000)
 }
+
+/**
+ * Scope label for a request: the Asset · Activity chain, showing whichever levels are present
+ * (project is always shown separately as the heading/column). Neither present → "Whole project".
+ */
+export function scopeChain(assetName?: string | null, activityLabel?: string | null): string {
+  const parts = [assetName, activityLabel].filter((x): x is string => !!x)
+  return parts.length > 0 ? parts.join(' · ') : 'Whole project'
+}

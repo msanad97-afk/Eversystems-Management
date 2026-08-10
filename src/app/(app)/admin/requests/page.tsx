@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/Table'
 import { MaterialRequestStatusBadge } from '@/components/materialRequests/MaterialRequestStatusBadge'
+import { scopeChain } from '@/components/materialRequests/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,9 +12,7 @@ function fmtTime(iso: Date | null): string {
   return iso ? new Date(iso).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'
 }
 function scopeLabel(r: { asset: { name: string } | null; activity: { name: string } | null }): string {
-  if (r.activity) return r.activity.name
-  if (r.asset) return r.asset.name
-  return 'Whole project'
+  return scopeChain(r.asset?.name, r.activity?.name)
 }
 
 export default async function AdminRequestsPage() {

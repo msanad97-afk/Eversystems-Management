@@ -3,7 +3,7 @@ import { notFound, redirect } from 'next/navigation'
 import { getSessionUser } from '@/lib/auth/permissions'
 import { prisma } from '@/lib/prisma'
 import { loadScopeSignals } from '@/lib/materialRequests/signals.server'
-import { fmtQty } from '@/components/materialRequests/types'
+import { fmtQty, scopeChain } from '@/components/materialRequests/types'
 import { MaterialRequestStatusBadge } from '@/components/materialRequests/MaterialRequestStatusBadge'
 import { RequestActions } from '@/components/materialRequests/RequestActions'
 
@@ -33,7 +33,7 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
   )
   const signalById = new Map(signals.map((s) => [s.materialId, s]))
   const reviewed = request.status !== 'DRAFT' && request.status !== 'SUBMITTED'
-  const scope = request.activity ? `${request.activity.ref ? `${request.activity.ref} · ` : ''}${request.activity.name}` : request.asset ? request.asset.name : 'Whole project'
+  const scope = scopeChain(request.asset?.name, request.activity ? `${request.activity.ref ? `${request.activity.ref} · ` : ''}${request.activity.name}` : null)
 
   return (
     <div className="space-y-5">
@@ -48,6 +48,15 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
           <MaterialRequestStatusBadge status={request.status} />
         </div>
       </div>
+
+      {/* Reviewed requests print as a quantities-only procurement letter (approved qtys). */}
+      {(request.status === 'APPROVED' || request.status === 'PARTIALLY_APPROVED') && (
+        <div className="flex justify-end">
+          <a href={`/api/material-requests/${request.id}/pdf`} target="_blank" rel="noreferrer" className="text-sm font-medium text-primary-700 hover:underline">
+            Download PDF
+          </a>
+        </div>
+      )}
 
       {request.reviewNote && (
         <div className="rounded-md border border-border bg-surface-muted px-3 py-2 text-sm text-fg-muted">
