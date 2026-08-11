@@ -1,5 +1,6 @@
 import React from 'react'
-import { Document, Page, View, Text, StyleSheet, Svg, Rect, Path } from '@react-pdf/renderer'
+import { Document, Page, View, Text, StyleSheet } from '@react-pdf/renderer'
+import { PdfHeader } from '@/lib/pdf/PdfHeader'
 
 /**
  * Material-request "letter" — a procurement hand-off document. QUANTITIES ONLY: it shows the
@@ -25,16 +26,10 @@ export interface MaterialRequestPdfData {
   generatedAt: string
 }
 
-const BRAND = '#598C71' // logo mark tile
 const BRAND_TEXT = '#47715B' // headings — darker green for AA as small text on white
 
 const styles = StyleSheet.create({
   page: { paddingHorizontal: 40, paddingVertical: 36, fontFamily: 'Inter', fontSize: 10, color: '#1A1917' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  brandName: { fontSize: 14, fontWeight: 600 },
-  brandSub: { fontSize: 9, color: '#5A5852' },
-  title: { fontSize: 16, fontWeight: 600, color: BRAND_TEXT },
   metaBox: { borderWidth: 1, borderColor: '#E4E3E0', borderRadius: 6, padding: 10, marginBottom: 16 },
   metaRow: { flexDirection: 'row', marginBottom: 3 },
   metaLabel: { width: 90, color: '#5A5852' },
@@ -51,15 +46,6 @@ const styles = StyleSheet.create({
   footer: { position: 'absolute', bottom: 20, left: 40, right: 40, flexDirection: 'row', justifyContent: 'space-between', fontSize: 8, color: '#A8A6A0' },
 })
 
-function CrossMark() {
-  return (
-    <Svg width={26} height={26} viewBox="0 0 40 40">
-      <Rect x={0} y={0} width={40} height={40} rx={9} fill={BRAND} />
-      <Path d="M17 8h6v9h9v6h-9v9h-6v-9H8v-6h9V8z" fill="#FFFFFF" />
-    </Svg>
-  )
-}
-
 function round3(n: number): number {
   return Math.round(n * 1000) / 1000
 }
@@ -69,16 +55,7 @@ export function MaterialRequestPdf({ data }: { data: MaterialRequestPdfData }) {
   return (
     <Document title={`Material Request ${data.requestCode}`}>
       <Page size="A4" style={styles.page}>
-        <View style={styles.header}>
-          <View style={styles.brandRow}>
-            <CrossMark />
-            <View>
-              <Text style={styles.brandName}>Eversystems</Text>
-              <Text style={styles.brandSub}>Management</Text>
-            </View>
-          </View>
-          <Text style={styles.title}>Material Request</Text>
-        </View>
+        <PdfHeader title="Material Request" />
 
         <View style={styles.metaBox}>
           <View style={styles.metaRow}><Text style={styles.metaLabel}>Scope</Text><Text style={styles.metaValue}>{scopeLine}</Text></View>
@@ -120,7 +97,7 @@ export function MaterialRequestPdf({ data }: { data: MaterialRequestPdfData }) {
         </View>
 
         <View style={styles.footer} fixed>
-          <Text>Eversystems Management · {data.requestCode}</Text>
+          <Text>{data.requestCode}</Text>
           <Text>Generated {data.generatedAt}</Text>
         </View>
       </Page>
