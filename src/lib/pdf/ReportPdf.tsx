@@ -157,7 +157,7 @@ export function ReportPdf({ data }: { data: ReportPdfData }) {
         </View>
 
         <View style={styles.footer} fixed>
-          <Text>{data.reportCode}</Text>
+          <Text>Eversystems Management</Text>
           <Text>Generated {data.generatedAt}</Text>
         </View>
       </Page>

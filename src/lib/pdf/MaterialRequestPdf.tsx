@@ -97,7 +97,7 @@ export function MaterialRequestPdf({ data }: { data: MaterialRequestPdfData }) {
         </View>
 
         <View style={styles.footer} fixed>
-          <Text>{data.requestCode}</Text>
+          <Text>Eversystems Management · {data.requestCode}</Text>
           <Text>Generated {data.generatedAt}</Text>
         </View>
       </Page>
