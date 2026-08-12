@@ -21,10 +21,10 @@ export interface DeliveryView {
 export interface DeliveryLineInput {
   materialId: string
   quantity: number
-  unit: string
 }
 export interface DeliveryInput {
-  supplierName: string
+  // Stage 2A-2: a delivery note covers exactly one supplier, chosen by id (not free text).
+  supplierId: string
   deliveryNoteNumber: string
   notes?: string | null
   lines: DeliveryLineInput[]
@@ -32,7 +32,7 @@ export interface DeliveryInput {
 
 /** Validate a delivery: supplier + note number required; ≥1 line; each material once; qty > 0. */
 export function validateDeliveryInput(d: DeliveryInput): string | null {
-  if (!d.supplierName || !d.supplierName.trim()) return 'Supplier is required.'
+  if (!d.supplierId || !d.supplierId.trim()) return 'Supplier is required.'
   if (!d.deliveryNoteNumber || !d.deliveryNoteNumber.trim()) return 'Delivery note number is required.'
   if (!d.lines || d.lines.length === 0) return 'Add at least one material line.'
   const seen = new Set<string>()

@@ -50,11 +50,12 @@ export default async function ReportPage({ params }: { params: { id: string } })
   const reportSubs = report.activities.flatMap((ra) => ra.subActivities)
 
   if (editable) {
-    const [formScope, activeCats, activeMats, deliveries] = await Promise.all([
+    const [formScope, activeCats, activeMats, deliveries, activeSuppliers] = await Promise.all([
       loadFormScope(report.projectId, report.id),
       prisma.laborCategory.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true, isActive: true } }),
-      prisma.material.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true, unit: true, isActive: true } }),
+      prisma.material.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true, unit: true, isActive: true, supplierId: true } }),
       loadReportDeliveries(report.id),
+      prisma.supplier.findMany({ where: { isActive: true }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     ])
 
     const catMap = new Map<string, CategoryOption>(activeCats.map((c) => [c.id, c]))
@@ -88,6 +89,7 @@ export default async function ReportPage({ params }: { params: { id: string } })
         categories={Array.from(catMap.values())}
         materials={Array.from(matMap.values())}
         deliveries={deliveries}
+        suppliers={activeSuppliers}
       />
     )
   }

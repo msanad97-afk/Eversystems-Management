@@ -244,7 +244,8 @@ model Supplier {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
 
-  materials Material[]
+  materials  Material[]
+  deliveries Delivery[]
 }
 
 // ─── CATALOG ACTIVITIES (Rev 2) ───────────────────────────────────────────────
@@ -840,6 +841,11 @@ model MaterialRequestLine {
 model Delivery {
   id                 String   @id @default(cuid())
   dailyReportId      String
+  // Stage 2A-2: a delivery note covers exactly one supplier. supplierId is the live link;
+  // supplierName is a frozen snapshot of the supplier's name at entry (kept so the record still
+  // reads correctly after a rename, and for older rows that predate supplierId). supplierName is
+  // intentionally retained for now — a later deploy removes it once nothing reads it.
+  supplierId         String?
   supplierName       String
   deliveryNoteNumber String
   attachmentUrl      String? // null until 2B wires file upload
@@ -849,9 +855,11 @@ model Delivery {
 
   dailyReport DailyReport    @relation(fields: [dailyReportId], references: [id], onDelete: Cascade)
   createdBy   User           @relation("DeliveryCreatedBy", fields: [createdById], references: [id])
+  supplier    Supplier?      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   lines       DeliveryLine[]
 
   @@index([dailyReportId])
+  @@index([supplierId])
 }
 
 model DeliveryLine {

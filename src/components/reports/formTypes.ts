@@ -38,6 +38,8 @@ export interface MaterialOption {
   name: string
   unit: string
   isActive: boolean
+  /** Stage 2A-2: owning supplier (for the delivery material dropdown filter). No pricing. */
+  supplierId?: string | null
 }
 
 // Scope for the report form: assets → activities → sub-activities with cap/budget/floor.

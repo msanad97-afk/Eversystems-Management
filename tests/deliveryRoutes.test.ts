@@ -60,7 +60,7 @@ describe('deliveries are immutable once the report is reviewed', () => {
     vi.mocked(prisma.dailyReport.findUnique).mockResolvedValue({
       id: 'r1', authorId: USER_ID, projectId: 'p1', status: 'APPROVED' as ReportStatus, reportCode: 'DR-1',
     } as never)
-    const res = await createDelivery(req({ supplierName: 'X', deliveryNoteNumber: 'DN', lines: [{ materialId: 'm1', quantity: 1 }] }), { params: { id: 'r1' } })
+    const res = await createDelivery(req({ supplierId: 's1', deliveryNoteNumber: 'DN', lines: [{ materialId: 'm1', quantity: 1 }] }), { params: { id: 'r1' } })
     expect(res.status).toBe(409)
   })
 

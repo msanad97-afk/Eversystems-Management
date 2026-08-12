@@ -9,12 +9,14 @@ import type { DeliveryView } from '@/lib/deliveries/types'
 
 const deliveryInclude = {
   createdBy: { select: { firstName: true, lastName: true } },
+  supplier: { select: { name: true } },
   lines: { orderBy: { id: 'asc' as const }, select: { id: true, materialId: true, quantity: true, unit: true, material: { select: { name: true } } } },
 }
 
 interface LoadedDelivery {
   id: string
   supplierName: string
+  supplier: { name: string } | null
   deliveryNoteNumber: string
   attachmentUrl: string | null
   notes: string | null
@@ -25,7 +27,8 @@ interface LoadedDelivery {
 export function toDeliveryView(d: LoadedDelivery): DeliveryView {
   return {
     id: d.id,
-    supplierName: d.supplierName,
+    // Prefer the live supplier relation; fall back to the frozen snapshot for older rows.
+    supplierName: d.supplier?.name ?? d.supplierName,
     deliveryNoteNumber: d.deliveryNoteNumber,
     hasAttachment: d.attachmentUrl != null,
     notes: d.notes,
