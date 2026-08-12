@@ -8,6 +8,7 @@ import { canAuthorReport } from '@/lib/reports/query'
 import { canSubmit, validateForSubmit, type SubActivityInput } from '@/lib/reports/rules'
 import { remainingBySubActivity, lumpsumFloorBySubActivity } from '@/lib/reports/progress'
 import { notifyReportSubmitted } from '@/lib/notifications'
+import { syncMissingAttachmentAlerts } from '@/lib/deliveries/alerts.server'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireUser()
@@ -63,9 +64,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const error = validateForSubmit(subs)
   if (error) return NextResponse.json({ error }, { status: 400 })
 
-  await prisma.dailyReport.update({
-    where: { id: report.id },
-    data: { status: 'SUBMITTED', submittedAt: new Date(), reviewedById: null, reviewedAt: null, reviewNote: null },
+  // Submit + raise MISSING_ATTACHMENT alerts (one per attachment-less delivery) atomically.
+  await prisma.$transaction(async (tx) => {
+    await tx.dailyReport.update({
+      where: { id: report.id },
+      data: { status: 'SUBMITTED', submittedAt: new Date(), reviewedById: null, reviewedAt: null, reviewNote: null },
+    })
+    await syncMissingAttachmentAlerts(tx, report.id, report.projectId)
   })
 
   writeAuditLog({

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { ReportStatusBadge } from '@/components/reports/ReportStatusBadge'
 import { computeManpowerTotals } from '@/lib/reports/rules'
 import { useToast } from '@/contexts/ToastContext'
+import type { DeliveryView } from '@/lib/deliveries/types'
 
 export interface RoManpower { id: string; categoryName: string; headcount: number; hours: number }
 export interface RoMaterial { id: string; materialName: string; unit: string; quantity: number }
@@ -59,7 +60,7 @@ function subLabel(s: RoSub): string {
   return `${s.quantityDone ?? 0} ${s.unit} · ${round1(s.cumulativePercent)}% complete`
 }
 
-export function ReportReadOnlyView({ report, canRecall }: { report: ReportDetail; canRecall: boolean }) {
+export function ReportReadOnlyView({ report, canRecall, deliveries }: { report: ReportDetail; canRecall: boolean; deliveries: DeliveryView[] }) {
   const router = useRouter()
   const { showToast } = useToast()
   const [recalling, setRecalling] = useState(false)
@@ -163,6 +164,31 @@ export function ReportReadOnlyView({ report, canRecall }: { report: ReportDetail
         <div className="rounded-lg border border-border bg-surface px-4 py-3 text-sm font-medium text-fg">
           Total: {totals.workers} workers · {totals.manHours} man-hours
         </div>
+      )}
+
+      {deliveries.length > 0 && (
+        <section className="rounded-lg border border-border bg-surface p-4">
+          <h2 className="mb-2 font-semibold text-fg">Deliveries</h2>
+          <div className="space-y-2">
+            {deliveries.map((d) => (
+              <div key={d.id} className="rounded-md border border-border p-3">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-sm font-medium text-fg">{d.supplierName}</span>
+                  <span className="text-xs text-fg-subtle">Note {d.deliveryNoteNumber}{d.hasAttachment ? '' : ' · no attachment'}</span>
+                </div>
+                <ul className="mt-1 space-y-0.5 border-t border-border pt-1">
+                  {d.lines.map((l) => (
+                    <li key={l.id} className="flex justify-between text-sm text-fg">
+                      <span>{l.materialName}</span>
+                      <span className="tabular-nums text-fg-muted">{l.quantity} {l.unit}</span>
+                    </li>
+                  ))}
+                </ul>
+                {d.notes && <p className="mt-1 text-sm text-fg-muted">{d.notes}</p>}
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {report.generalNotes && (

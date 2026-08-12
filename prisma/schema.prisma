@@ -99,6 +99,9 @@ enum AuditAction {
   MATERIAL_REQUEST_SUBMITTED
   MATERIAL_REQUEST_RECALLED
   MATERIAL_REQUEST_REVIEWED
+  DELIVERY_CREATED
+  DELIVERY_DELETED
+  INVENTORY_ALERT_ACKNOWLEDGED
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -129,6 +132,9 @@ model User {
 
   materialRequestsRaised   MaterialRequest[] @relation("MReqRequester")
   materialRequestsReviewed MaterialRequest[] @relation("MReqReviewer")
+
+  deliveries         Delivery[]       @relation("DeliveryCreatedBy")
+  acknowledgedAlerts InventoryAlert[] @relation("AlertAcknowledgedBy")
 }
 
 // ─── PROJECTS (SITES) ──────────────────────────────────────────────────────────
@@ -172,6 +178,7 @@ model Project {
   expenses         Expense[]
   cashTransactions CashTransaction[] // Phase 6E: cash movements allocated to this project
   materialRequests MaterialRequest[]
+  inventoryAlerts  InventoryAlert[]
 }
 
 model ProjectMember {
@@ -213,6 +220,8 @@ model Material {
   catalogRates       CatalogMaterialRate[]
   subActivityBudgets SubActivityMaterialBudget[]
   requestLines       MaterialRequestLine[]
+  deliveryLines      DeliveryLine[]
+  inventoryAlerts    InventoryAlert[]
 }
 
 // ─── CATALOG ACTIVITIES (Rev 2) ───────────────────────────────────────────────
@@ -306,6 +315,7 @@ model DailyReport {
   reviewedBy User?   @relation("ReportReviewer", fields: [reviewedById], references: [id])
 
   activities ReportActivity[]
+  deliveries Delivery[]
 
   @@unique([projectId, reportDate, authorId])
   @@index([projectId, reportDate])
@@ -795,4 +805,73 @@ model MaterialRequestLine {
 
   @@unique([requestId, materialId]) // a material appears at most once per request
   @@index([materialId])
+}
+
+// ─── DELIVERIES (Stage 2A: material deliveries on the daily report) ────────────
+// A supervisor logs materials delivered to site on a daily report. Quantities only —
+// NO cost anywhere. A delivery may carry an attachment (delivery-note scan); the field
+// exists now but is wired in 2B. On report submit, a delivery with no attachment raises a
+// MISSING_ATTACHMENT InventoryAlert (one per delivery). Deliveries are immutable once the
+// parent report leaves the editable state, matching report immutability.
+
+model Delivery {
+  id                 String   @id @default(cuid())
+  dailyReportId      String
+  supplierName       String
+  deliveryNoteNumber String
+  attachmentUrl      String? // null until 2B wires file upload
+  notes              String?
+  createdById        String
+  createdAt          DateTime @default(now())
+
+  dailyReport DailyReport    @relation(fields: [dailyReportId], references: [id], onDelete: Cascade)
+  createdBy   User           @relation("DeliveryCreatedBy", fields: [createdById], references: [id])
+  lines       DeliveryLine[]
+
+  @@index([dailyReportId])
+}
+
+model DeliveryLine {
+  id         String  @id @default(cuid())
+  deliveryId String
+  materialId String
+  quantity   Decimal @db.Decimal(12, 3)
+  unit       String // snapshot at entry — never resolved from the catalog at read time
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  material Material @relation(fields: [materialId], references: [id])
+
+  @@index([deliveryId])
+}
+
+// Inventory alerts (added in 2A; 2C reuses the model for COUNT_VARIANCE / NEGATIVE_BALANCE).
+// ADMIN-only surface. `sourceRecordId` points at the record that raised it (e.g. a Delivery id).
+model InventoryAlert {
+  id               String               @id @default(cuid())
+  projectId        String
+  materialId       String?
+  type             InventoryAlertType
+  quantity         Decimal?             @db.Decimal(12, 3)
+  sourceRecordId   String?
+  status           InventoryAlertStatus @default(OPEN)
+  createdAt        DateTime             @default(now())
+  acknowledgedById String?
+  acknowledgedAt   DateTime?
+
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  material       Material? @relation(fields: [materialId], references: [id])
+  acknowledgedBy User?     @relation("AlertAcknowledgedBy", fields: [acknowledgedById], references: [id])
+
+  @@index([projectId, status])
+}
+
+enum InventoryAlertType {
+  MISSING_ATTACHMENT
+  COUNT_VARIANCE
+  NEGATIVE_BALANCE
+}
+
+enum InventoryAlertStatus {
+  OPEN
+  ACKNOWLEDGED
 }

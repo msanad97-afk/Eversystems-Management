@@ -8,6 +8,8 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/contexts/ToastContext'
 import { WEATHER_OPTIONS, validateForSubmit, computeManpowerTotals, type SubActivityInput } from '@/lib/reports/rules'
 import { ActivityCard, emptySubHelper } from '@/components/reports/ActivityCard'
+import { DeliveriesSection } from '@/components/deliveries/DeliveriesSection'
+import type { DeliveryView } from '@/lib/deliveries/types'
 import {
   type ActivityRow,
   type SubRow,
@@ -49,11 +51,13 @@ export function ReportForm({
   scope,
   categories,
   materials,
+  deliveries,
 }: {
   report: ReportFormData
   scope: AssetOption[]
   categories: CategoryOption[]
   materials: MaterialOption[]
+  deliveries: DeliveryView[]
 }) {
   const router = useRouter()
   const { showToast } = useToast()
@@ -233,6 +237,8 @@ export function ReportForm({
         ))}
         <Button type="button" variant="secondary" onClick={addActivity} fullWidth>+ Add activity</Button>
       </div>
+
+      <DeliveriesSection reportId={report.id} initialDeliveries={deliveries} materials={materials} />
 
       <div className="rounded-lg border border-border bg-surface p-4">
         <label className="mb-1 block text-sm font-medium text-fg">General notes</label>

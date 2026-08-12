@@ -17,6 +17,9 @@ vi.mock('@/lib/prisma', () => ({
     // Phase 6B: approval now snapshots entry costs inside a transaction.
     manpowerEntry: { update: vi.fn().mockResolvedValue({}) },
     materialEntry: { update: vi.fn().mockResolvedValue({}) },
+    // Stage 2A: submit raises MISSING_ATTACHMENT alerts for attachment-less deliveries.
+    delivery: { findMany: vi.fn().mockResolvedValue([]) },
+    inventoryAlert: { findMany: vi.fn().mockResolvedValue([]), createMany: vi.fn().mockResolvedValue({}) },
     $transaction: vi.fn(),
   },
 }))

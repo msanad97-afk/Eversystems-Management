@@ -23,6 +23,7 @@ export const SIDEBAR_ITEMS: NavItem[] = [
   { label: 'Executive', href: '/admin/executive', roles: ['ADMIN'] },
   { label: 'Review', href: '/admin/review', roles: ['ADMIN'] },
   { label: 'Material Requests', href: '/admin/requests', roles: ['ADMIN'] },
+  { label: 'Inventory Alerts', href: '/admin/alerts', roles: ['ADMIN'] },
   { label: 'Reports', href: '/admin/reports', roles: ['ADMIN', 'VIEWER'] },
   { label: 'Users', href: '/admin/users', roles: ['ADMIN'] },
   { label: 'Projects', href: '/admin/projects', roles: ['ADMIN'] },

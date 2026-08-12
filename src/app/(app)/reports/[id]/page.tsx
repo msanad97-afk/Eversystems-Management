@@ -5,6 +5,7 @@ import { getReportScope } from '@/lib/reports/access'
 import { canReadReport, canAuthorReport } from '@/lib/reports/query'
 import { canEdit, cumulativePercent } from '@/lib/reports/rules'
 import { loadFormScope, earnedBySubActivity } from '@/lib/reports/progress'
+import { loadReportDeliveries } from '@/lib/deliveries/deliveries.server'
 import { ReportForm } from '@/components/reports/ReportForm'
 import { ReportReadOnlyView } from '@/components/reports/ReportReadOnlyView'
 import { ReviewActions } from '@/components/reports/ReviewActions'
@@ -49,10 +50,11 @@ export default async function ReportPage({ params }: { params: { id: string } })
   const reportSubs = report.activities.flatMap((ra) => ra.subActivities)
 
   if (editable) {
-    const [formScope, activeCats, activeMats] = await Promise.all([
+    const [formScope, activeCats, activeMats, deliveries] = await Promise.all([
       loadFormScope(report.projectId, report.id),
       prisma.laborCategory.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true, isActive: true } }),
       prisma.material.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true, unit: true, isActive: true } }),
+      loadReportDeliveries(report.id),
     ])
 
     const catMap = new Map<string, CategoryOption>(activeCats.map((c) => [c.id, c]))
@@ -85,13 +87,14 @@ export default async function ReportPage({ params }: { params: { id: string } })
         scope={formScope}
         categories={Array.from(catMap.values())}
         materials={Array.from(matMap.values())}
+        deliveries={deliveries}
       />
     )
   }
 
   // Read-only: measured cumulative % per sub from approved earned; lumpsum earned = % × BHD.
   const measuredSubIds = reportSubs.filter((rs) => rs.subActivity.type === 'MEASURED').map((rs) => rs.subActivityId)
-  const earned = await earnedBySubActivity(measuredSubIds)
+  const [earned, deliveries] = await Promise.all([earnedBySubActivity(measuredSubIds), loadReportDeliveries(report.id)])
   const canReview = user.role === 'ADMIN' && report.status === 'SUBMITTED'
 
   return (
@@ -102,6 +105,7 @@ export default async function ReportPage({ params }: { params: { id: string } })
       </div>
       <ReportReadOnlyView
         canRecall={isAuthor && report.status === 'SUBMITTED'}
+        deliveries={deliveries}
         report={{
           id: report.id,
           reportCode: report.reportCode,
