@@ -28,11 +28,13 @@ export function DeliveriesSection({
   initialDeliveries,
   materials,
   suppliers,
+  onCountChange,
 }: {
   reportId: string
   initialDeliveries: DeliveryView[]
   materials: MaterialOption[]
   suppliers: SupplierOption[]
+  onCountChange?: (count: number) => void
 }) {
   const { showToast } = useToast()
   const [deliveries, setDeliveries] = useState<DeliveryView[]>(initialDeliveries)
@@ -75,7 +77,9 @@ export function DeliveriesSection({
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error ?? 'Could not save delivery.')
-      setDeliveries((prev) => [...prev, data.delivery as DeliveryView])
+      const next = [...deliveries, data.delivery as DeliveryView]
+      setDeliveries(next)
+      onCountChange?.(next.length)
       showToast('Delivery added.', 'success')
       resetForm()
     } catch (err) {
@@ -91,7 +95,9 @@ export function DeliveriesSection({
       const res = await fetch(`/api/reports/${reportId}/deliveries/${id}`, { method: 'DELETE' })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error ?? 'Could not remove delivery.')
-      setDeliveries((prev) => prev.filter((d) => d.id !== id))
+      const next = deliveries.filter((d) => d.id !== id)
+      setDeliveries(next)
+      onCountChange?.(next.length)
       showToast('Delivery removed.', 'success')
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Could not remove delivery.', 'error')

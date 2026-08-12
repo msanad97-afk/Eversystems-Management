@@ -139,9 +139,11 @@ export function hasProgress(s: Pick<SubActivityInput, 'type' | 'quantityDone' | 
  *   - every line within its cap / lumpsum bounds.
  * Manpower and materials remain optional per line.
  */
-export function validateForSubmit(subs: SubActivityInput[]): string | null {
-  if (!subs.some(hasProgress)) {
-    return 'Add at least one line with progress (a quantity or a % complete) before submitting.'
+export function validateForSubmit(subs: SubActivityInput[], hasDeliveries = false): string | null {
+  // A report is valid with at least one activity line with progress OR at least one delivery
+  // (a delivery-only day — material arriving during mobilisation — is a normal occurrence).
+  if (!hasDeliveries && !subs.some(hasProgress)) {
+    return 'Add at least one activity with progress, or a delivery, before submitting.'
   }
   for (const s of subs) {
     for (const m of s.manpower) {

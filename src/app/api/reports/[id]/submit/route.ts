@@ -61,7 +61,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     materials: r.materials.map((m) => ({ materialId: m.materialId, quantity: Number(m.quantity) })),
   }))
 
-  const error = validateForSubmit(subs)
+  // A delivery-only day is valid: allow submit when there is progress OR at least one delivery.
+  const deliveryCount = await prisma.delivery.count({ where: { dailyReportId: report.id } })
+  const error = validateForSubmit(subs, deliveryCount > 0)
   if (error) return NextResponse.json({ error }, { status: 400 })
 
   // Submit + raise MISSING_ATTACHMENT alerts (one per attachment-less delivery) atomically.

@@ -82,6 +82,9 @@ export function ReportForm({
   const [copying, setCopying] = useState(false)
   const [lastSaved, setLastSaved] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  // Live delivery count (seeded from the server, updated by the Deliveries section) — a
+  // delivery-only day is a valid submit.
+  const [deliveryCount, setDeliveryCount] = useState(deliveries.length)
 
   const dirty = useRef(false)
   const markDirty = () => { dirty.current = true }
@@ -155,7 +158,7 @@ export function ReportForm({
   }
 
   async function onSubmit() {
-    const error = validateForSubmit(buildSubInputs())
+    const error = validateForSubmit(buildSubInputs(), deliveryCount > 0)
     if (error) { showToast(error, 'error'); setConfirmOpen(false); return }
     if (!(await save({ silent: true }))) { setConfirmOpen(false); return }
     setSaving(true)
@@ -240,7 +243,7 @@ export function ReportForm({
         <Button type="button" variant="secondary" onClick={addActivity} fullWidth>+ Add activity</Button>
       </div>
 
-      <DeliveriesSection reportId={report.id} initialDeliveries={deliveries} materials={materials} suppliers={suppliers} />
+      <DeliveriesSection reportId={report.id} initialDeliveries={deliveries} materials={materials} suppliers={suppliers} onCountChange={setDeliveryCount} />
 
       <div className="rounded-lg border border-border bg-surface p-4">
         <label className="mb-1 block text-sm font-medium text-fg">General notes</label>
