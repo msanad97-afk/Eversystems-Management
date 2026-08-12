@@ -1,11 +1,12 @@
 'use client'
 
 import { useState } from 'react'
-import { CatalogEditor, type CatalogItem } from '@/components/admin/CatalogEditor'
+import { CatalogEditor, type CatalogItem, type SupplierOption } from '@/components/admin/CatalogEditor'
 import { CatalogActivityManager, type LaborOption, type MaterialOption } from '@/components/admin/CatalogActivityManager'
+import { SupplierEditor, type SupplierItem } from '@/components/admin/SupplierEditor'
 import type { CatalogActivityDTO } from '@/lib/catalog/payload'
 
-type Tab = 'labor' | 'material' | 'activity'
+type Tab = 'labor' | 'material' | 'activity' | 'supplier'
 
 export function CatalogsClient({
   labor,
@@ -13,12 +14,16 @@ export function CatalogsClient({
   activities,
   laborOptions,
   materialOptions,
+  suppliers,
+  supplierOptions,
 }: {
   labor: CatalogItem[]
   materials: CatalogItem[]
   activities: CatalogActivityDTO[]
   laborOptions: LaborOption[]
   materialOptions: MaterialOption[]
+  suppliers: SupplierItem[]
+  supplierOptions: SupplierOption[]
 }) {
   const [tab, setTab] = useState<Tab>('activity')
 
@@ -26,6 +31,7 @@ export function CatalogsClient({
     { key: 'activity', label: 'Activities' },
     { key: 'labor', label: 'Labor categories' },
     { key: 'material', label: 'Materials' },
+    { key: 'supplier', label: 'Suppliers' },
   ]
 
   return (
@@ -49,7 +55,8 @@ export function CatalogsClient({
         <CatalogActivityManager initial={activities} laborOptions={laborOptions} materialOptions={materialOptions} />
       )}
       {tab === 'labor' && <CatalogEditor kind="labor" initial={labor} />}
-      {tab === 'material' && <CatalogEditor kind="material" initial={materials} />}
+      {tab === 'material' && <CatalogEditor kind="material" initial={materials} supplierOptions={supplierOptions} />}
+      {tab === 'supplier' && <SupplierEditor initial={suppliers} />}
     </div>
   )
 }

@@ -102,6 +102,8 @@ enum AuditAction {
   DELIVERY_CREATED
   DELIVERY_DELETED
   INVENTORY_ALERT_ACKNOWLEDGED
+  SUPPLIER_CREATED
+  SUPPLIER_UPDATED
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -209,19 +211,40 @@ model LaborCategory {
 }
 
 model Material {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  unit      String
-  isActive  Boolean  @default(true)
-  sortOrder Int      @default(0)
-  unitRate  Decimal? @db.Decimal(12, 3) // Phase 6: cost per unit
+  id         String   @id @default(cuid())
+  name       String   @unique
+  unit       String
+  isActive   Boolean  @default(true)
+  sortOrder  Int      @default(0)
+  unitRate   Decimal? @db.Decimal(12, 3) // Phase 6: cost per unit
+  // Stage 2A-1: optional preferred supplier. Nullable and stays nullable; SetNull so removing a
+  // supplier never deletes a material. Carries NO pricing.
+  supplierId String?
 
+  supplier           Supplier?                   @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   entries            MaterialEntry[]
   catalogRates       CatalogMaterialRate[]
   subActivityBudgets SubActivityMaterialBudget[]
   requestLines       MaterialRequestLine[]
   deliveryLines      DeliveryLine[]
   inventoryAlerts    InventoryAlert[]
+
+  @@index([supplierId])
+}
+
+// ─── SUPPLIERS (Stage 2A-1) ───────────────────────────────────────────────────
+// ADMIN-managed supplier catalogue. Carries contact details only — NO pricing. A supplier with
+// materials attached is deactivated, never deleted; deletion is allowed only when unreferenced.
+model Supplier {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  contactName  String?
+  contactPhone String?
+  contactEmail String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  materials Material[]
 }
 
 // ─── CATALOG ACTIVITIES (Rev 2) ───────────────────────────────────────────────

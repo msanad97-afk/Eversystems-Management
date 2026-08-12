@@ -16,7 +16,12 @@ export interface CatalogItem {
   /** Phase 6A cost rates (ADMIN-only): BHD per man-hour / per material unit. */
   hourlyRate?: number | null
   unitRate?: number | null
+  /** Stage 2A-1 (material only): optional preferred supplier. Carries no pricing. */
+  supplierId?: string | null
+  supplierName?: string | null
 }
+
+export interface SupplierOption { id: string; name: string }
 
 type Kind = 'labor' | 'material'
 
@@ -26,7 +31,7 @@ const ENDPOINT: Record<Kind, string> = {
 }
 const RESP_KEY: Record<Kind, string> = { labor: 'category', material: 'material' }
 
-export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogItem[] }) {
+export function CatalogEditor({ kind, initial, supplierOptions = [] }: { kind: Kind; initial: CatalogItem[]; supplierOptions?: SupplierOption[] }) {
   const router = useRouter()
   const { showToast } = useToast()
   const [items, setItems] = useState<CatalogItem[]>(initial)
@@ -38,6 +43,8 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
   const [editName, setEditName] = useState('')
   const [editUnit, setEditUnit] = useState('')
   const [editRate, setEditRate] = useState('')
+  const [supplierId, setSupplierId] = useState('')
+  const [editSupplierId, setEditSupplierId] = useState('')
 
   const isMaterial = kind === 'material'
   const noun = isMaterial ? 'Material' : 'Category'
@@ -65,19 +72,20 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
   async function add() {
     if (!name.trim() || (isMaterial && !unit.trim())) return
     setAdding(true)
-    const created = await call('POST', { name: name.trim(), unit: unit.trim(), ...rateBody(rate) })
+    const created = await call('POST', { name: name.trim(), unit: unit.trim(), ...rateBody(rate), ...(isMaterial ? { supplierId: supplierId || null } : {}) })
     if (created) {
       setItems((prev) => [...prev, created])
       setName('')
       setUnit('')
       setRate('')
+      setSupplierId('')
       showToast('Added.', 'success')
     }
     setAdding(false)
   }
 
   async function saveEdit(id: string) {
-    const updated = await call('PATCH', { id, name: editName.trim(), unit: editUnit.trim(), ...rateBody(editRate) })
+    const updated = await call('PATCH', { id, name: editName.trim(), unit: editUnit.trim(), ...rateBody(editRate), ...(isMaterial ? { supplierId: editSupplierId || null } : {}) })
     if (updated) {
       setItems((prev) => prev.map((i) => (i.id === id ? updated : i)))
       setEditId(null)
@@ -150,6 +158,15 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
         <div className="w-32">
           <Input label={`${rateLabel} (BHD)`} type="number" inputMode="decimal" min={0} step="any" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="optional" />
         </div>
+        {isMaterial && supplierOptions.length > 0 && (
+          <label className="block w-44">
+            <span className="mb-1 block text-sm font-medium text-fg">Supplier</span>
+            <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className="w-full rounded-md border border-border bg-surface px-2 py-2 text-sm text-fg">
+              <option value="">— none —</option>
+              {supplierOptions.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+            </select>
+          </label>
+        )}
         <Button onClick={add} loading={adding} disabled={!name.trim() || (isMaterial && !unit.trim())}>
           Add
         </Button>
@@ -194,6 +211,12 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
                 <div className="w-28">
                   <Input type="number" inputMode="decimal" min={0} step="any" value={editRate} onChange={(e) => setEditRate(e.target.value)} placeholder={rateLabel} />
                 </div>
+                {isMaterial && supplierOptions.length > 0 && (
+                  <select value={editSupplierId} onChange={(e) => setEditSupplierId(e.target.value)} className="w-40 rounded-md border border-border bg-surface px-2 py-2 text-sm text-fg" aria-label="Supplier">
+                    <option value="">— none —</option>
+                    {supplierOptions.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+                  </select>
+                )}
                 <Button size="sm" onClick={() => saveEdit(item.id)}>Save</Button>
                 <Button size="sm" variant="ghost" onClick={() => setEditId(null)}>Cancel</Button>
               </div>
@@ -202,6 +225,7 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
                 <div className="min-w-0 flex-1">
                   <span className="font-medium text-fg">{item.name}</span>
                   {isMaterial && <span className="ml-2 text-sm text-fg-subtle">{item.unit}</span>}
+                  {isMaterial && item.supplierName && <span className="ml-2 text-xs text-fg-subtle">· {item.supplierName}</span>}
                   {rateOf(item) == null ? (
                     <Badge tone="danger" className="ml-2">no rate</Badge>
                   ) : (
@@ -219,6 +243,7 @@ export function CatalogEditor({ kind, initial }: { kind: Kind; initial: CatalogI
                     setEditName(item.name)
                     setEditUnit(item.unit ?? '')
                     setEditRate(rateOf(item) == null ? '' : String(rateOf(item)))
+                    setEditSupplierId(item.supplierId ?? '')
                   }}
                 >
                   Edit
