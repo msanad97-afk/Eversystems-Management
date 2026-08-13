@@ -24,6 +24,7 @@
     "@fontsource/inter": "^5.2.8",
     "@prisma/client": "^5.18.0",
     "@react-pdf/renderer": "^3.4.5",
+    "@vercel/blob": "^2.8.0",
     "bcryptjs": "^2.4.3",
     "next": "^14.2.5",
     "next-auth": "^4.24.7",

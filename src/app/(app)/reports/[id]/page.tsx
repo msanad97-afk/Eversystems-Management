@@ -108,6 +108,7 @@ export default async function ReportPage({ params }: { params: { id: string } })
       <ReportReadOnlyView
         canRecall={isAuthor && report.status === 'SUBMITTED'}
         deliveries={deliveries}
+        canUploadAttachments={isAuthor || user.role === 'ADMIN'}
         report={{
           id: report.id,
           reportCode: report.reportCode,

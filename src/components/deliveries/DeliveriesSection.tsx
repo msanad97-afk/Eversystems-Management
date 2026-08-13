@@ -6,6 +6,7 @@ import { useToast } from '@/contexts/ToastContext'
 import type { MaterialOption } from '@/components/reports/formTypes'
 import { newKey } from '@/components/reports/formTypes'
 import type { DeliveryView } from '@/lib/deliveries/types'
+import { DeliveryAttachmentControl } from '@/components/deliveries/DeliveryAttachmentControl'
 
 export interface SupplierOption {
   id: string
@@ -131,6 +132,7 @@ export function DeliveriesSection({
             ))}
           </ul>
           {d.notes && <p className="mt-1 text-xs text-fg-muted">{d.notes}</p>}
+          <DeliveryAttachmentControl reportId={reportId} deliveryId={d.id} hasAttachment={d.hasAttachment} canUpload />
         </div>
       ))}
 

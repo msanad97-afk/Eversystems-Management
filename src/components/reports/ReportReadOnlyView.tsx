@@ -8,6 +8,7 @@ import { ReportStatusBadge } from '@/components/reports/ReportStatusBadge'
 import { computeManpowerTotals } from '@/lib/reports/rules'
 import { useToast } from '@/contexts/ToastContext'
 import type { DeliveryView } from '@/lib/deliveries/types'
+import { DeliveryAttachmentControl } from '@/components/deliveries/DeliveryAttachmentControl'
 
 export interface RoManpower { id: string; categoryName: string; headcount: number; hours: number }
 export interface RoMaterial { id: string; materialName: string; unit: string; quantity: number }
@@ -60,7 +61,7 @@ function subLabel(s: RoSub): string {
   return `${s.quantityDone ?? 0} ${s.unit} · ${round1(s.cumulativePercent)}% complete`
 }
 
-export function ReportReadOnlyView({ report, canRecall, deliveries }: { report: ReportDetail; canRecall: boolean; deliveries: DeliveryView[] }) {
+export function ReportReadOnlyView({ report, canRecall, deliveries, canUploadAttachments }: { report: ReportDetail; canRecall: boolean; deliveries: DeliveryView[]; canUploadAttachments: boolean }) {
   const router = useRouter()
   const { showToast } = useToast()
   const [recalling, setRecalling] = useState(false)
@@ -185,6 +186,7 @@ export function ReportReadOnlyView({ report, canRecall, deliveries }: { report: 
                   ))}
                 </ul>
                 {d.notes && <p className="mt-1 text-sm text-fg-muted">{d.notes}</p>}
+                <DeliveryAttachmentControl reportId={report.id} deliveryId={d.id} hasAttachment={d.hasAttachment} canUpload={canUploadAttachments} />
               </div>
             ))}
           </div>
