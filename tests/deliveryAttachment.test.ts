@@ -120,11 +120,12 @@ describe('the money wall + private-URL confidentiality', () => {
     expect(deliveries.find((d) => d.id === id.delA)!.hasAttachment).toBe(true)
   })
 
-  it('the view endpoint returns a signed URL to a viewer and 404 when no attachment', async () => {
+  it('the view endpoint 302-redirects (no-store) to the signed URL, 404 when no attachment', async () => {
     actAs(id.author!)
     const ok = await view(new Request('http://test/x') as never, { params: { id: id.reportDraft!, deliveryId: id.delA! } })
-    expect(ok.status).toBe(200)
-    expect((await ok.json()).url).toContain('signed.example')
+    expect(ok.status).toBe(302)
+    expect(ok.headers.get('location')).toContain('signed.example')
+    expect(ok.headers.get('cache-control')).toBe('no-store')
     const none = await view(new Request('http://test/x') as never, { params: { id: id.reportDraft!, deliveryId: id.delX! } })
     expect(none.status).toBe(404) // delX never got an attachment
   })

@@ -80,9 +80,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
 }
 
 /**
- * Return a short-lived signed URL for the delivery's attachment. Permission reuses the existing
- * report-read rule (author, reviewers/admins, or project members) — anyone who can view the
- * report can view its notes. The raw blob URL is never stored in or emitted by a serializer.
+ * 302-redirect to a short-lived signed URL for the delivery's attachment. A plain anchor
+ * (target="_blank") hits this endpoint, so the browser navigates directly — no fetch, no
+ * post-await window.open — which is what iOS Safari needs (a post-await open is blocked as a
+ * popup). Permission reuses the existing report-read rule (author, reviewers/admins, or project
+ * members). The signed URL is never stored in or emitted by a serializer, and `no-store`
+ * prevents any caching of the short-lived redirect target.
  */
 export async function GET(_req: NextRequest, { params }: { params: { id: string; deliveryId: string } }) {
   const guard = await requireUser()
@@ -100,5 +103,5 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string;
   if (!delivery.attachmentUrl) return NextResponse.json({ error: 'No attachment on this delivery.' }, { status: 404 })
 
   const url = await signedAttachmentUrl(delivery.attachmentUrl)
-  return NextResponse.json({ url })
+  return NextResponse.redirect(url, { status: 302, headers: { 'Cache-Control': 'no-store' } })
 }
