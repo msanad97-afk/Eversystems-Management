@@ -105,6 +105,7 @@ enum AuditAction {
   INVENTORY_ALERT_ACKNOWLEDGED
   SUPPLIER_CREATED
   SUPPLIER_UPDATED
+  CONSUMPTION_RECORDED
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -182,6 +183,7 @@ model Project {
   cashTransactions CashTransaction[] // Phase 6E: cash movements allocated to this project
   materialRequests MaterialRequest[]
   inventoryAlerts  InventoryAlert[]
+  consumptionEntries ConsumptionEntry[]
 }
 
 model ProjectMember {
@@ -229,6 +231,7 @@ model Material {
   requestLines       MaterialRequestLine[]
   deliveryLines      DeliveryLine[]
   inventoryAlerts    InventoryAlert[]
+  consumptionEntries ConsumptionEntry[]
 
   @@index([supplierId])
 }
@@ -339,8 +342,9 @@ model DailyReport {
   author     User    @relation("ReportAuthor", fields: [authorId], references: [id])
   reviewedBy User?   @relation("ReportReviewer", fields: [reviewedById], references: [id])
 
-  activities ReportActivity[]
-  deliveries Delivery[]
+  activities        ReportActivity[]
+  deliveries        Delivery[]
+  consumptionEntries ConsumptionEntry[]
 
   @@unique([projectId, reportDate, authorId])
   @@index([projectId, reportDate])
@@ -901,6 +905,38 @@ enum InventoryAlertType {
   MISSING_ATTACHMENT
   COUNT_VARIANCE
   NEGATIVE_BALANCE
+  MISSING_CONSUMPTION_RATE
+}
+
+// ─── CONSUMPTION LEDGER (Stage 2C-1) ──────────────────────────────────────────
+// Per-report material consumption. Derived from the sub-activity's placed budget rate
+// (SubActivityMaterialBudget.qtyPerUnit) × reported quantityDone. STORE EXACT (never round to
+// display precision — that compounds daily). estimateRate is the rate snapshot at write time so
+// a later catalogue-rate change never alters a past estimate. Quantities only — NO cost.
+enum ConsumptionSource {
+  ACTUAL // a value the supervisor entered
+  ESTIMATED // the untouched derived estimate
+  COUNT_ADJUSTMENT // reserved for 2C stock-count reconciliation
+}
+
+model ConsumptionEntry {
+  id                  String            @id @default(cuid())
+  dailyReportId       String
+  materialId          String
+  projectId           String // denormalised for balance queries
+  quantity            Decimal           @db.Decimal(12, 3)
+  unit                String // snapshot at entry
+  source              ConsumptionSource
+  estimateRate        Decimal?          @db.Decimal(12, 4) // frozen rate used for an estimate
+  subActivityReportId String? // links an estimate to the ReportSubActivity it came from
+  createdAt           DateTime          @default(now())
+
+  dailyReport DailyReport @relation(fields: [dailyReportId], references: [id], onDelete: Cascade)
+  material    Material    @relation(fields: [materialId], references: [id])
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, materialId])
+  @@index([dailyReportId])
 }
 
 enum InventoryAlertStatus {

@@ -9,6 +9,7 @@ import { canSubmit, validateForSubmit, type SubActivityInput } from '@/lib/repor
 import { remainingBySubActivity, lumpsumFloorBySubActivity } from '@/lib/reports/progress'
 import { notifyReportSubmitted } from '@/lib/notifications'
 import { syncMissingAttachmentAlerts } from '@/lib/deliveries/alerts.server'
+import { recordConsumptionOnSubmit } from '@/lib/consumption/consumption.server'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireUser()
@@ -66,13 +67,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const error = validateForSubmit(subs, deliveryCount > 0)
   if (error) return NextResponse.json({ error }, { status: 400 })
 
-  // Submit + raise MISSING_ATTACHMENT alerts (one per attachment-less delivery) atomically.
-  await prisma.$transaction(async (tx) => {
+  // Submit atomically: status + MISSING_ATTACHMENT alerts + derived consumption ledger.
+  const consumption = await prisma.$transaction(async (tx) => {
     await tx.dailyReport.update({
       where: { id: report.id },
       data: { status: 'SUBMITTED', submittedAt: new Date(), reviewedById: null, reviewedAt: null, reviewNote: null },
     })
     await syncMissingAttachmentAlerts(tx, report.id, report.projectId)
+    return recordConsumptionOnSubmit(tx, report.id, report.projectId)
   })
 
   writeAuditLog({
@@ -84,6 +86,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     entityCode: report.reportCode,
     ipAddress: getClientIp(req),
   })
+
+  if (consumption.entries > 0 || consumption.missingRateAlerts > 0) {
+    writeAuditLog({
+      action: 'CONSUMPTION_RECORDED',
+      userId: guard.user.id,
+      projectId: report.projectId,
+      entity: 'DailyReport',
+      entityId: report.id,
+      entityCode: report.reportCode,
+      metadata: { entries: consumption.entries, missingRateAlerts: consumption.missingRateAlerts },
+      ipAddress: getClientIp(req),
+    })
+  }
 
   void notifyReportSubmitted(report.id)
 

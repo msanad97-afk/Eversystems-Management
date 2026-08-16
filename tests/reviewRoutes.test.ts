@@ -20,6 +20,8 @@ vi.mock('@/lib/prisma', () => ({
     // Stage 2A: submit raises MISSING_ATTACHMENT alerts for attachment-less deliveries.
     delivery: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
     inventoryAlert: { findMany: vi.fn().mockResolvedValue([]), createMany: vi.fn().mockResolvedValue({}) },
+    // Stage 2C-1: submit records the derived consumption ledger (no reported subs here → no-op).
+    consumptionEntry: { count: vi.fn().mockResolvedValue(0), createMany: vi.fn().mockResolvedValue({}) },
     $transaction: vi.fn(),
   },
 }))

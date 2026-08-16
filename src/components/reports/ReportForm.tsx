@@ -10,6 +10,7 @@ import { WEATHER_OPTIONS, validateForSubmit, computeManpowerTotals, type SubActi
 import { ActivityCard, emptySubHelper } from '@/components/reports/ActivityCard'
 import { DeliveriesSection, type SupplierOption } from '@/components/deliveries/DeliveriesSection'
 import type { DeliveryView } from '@/lib/deliveries/types'
+import { formatConsumptionQty } from '@/lib/consumption/format'
 import {
   type ActivityRow,
   type SubRow,
@@ -94,6 +95,25 @@ export function ReportForm({
   const usedActivityIds = new Set(rows.map((r) => r.activityId).filter(Boolean))
   const includedSubs = rows.flatMap((r) => r.subs.filter((s) => s.included))
   const totals = computeManpowerTotals(includedSubs.flatMap((s) => s.manpower.map((m) => ({ headcount: Number(m.headcount), hours: Number(m.hours) }))))
+
+  // Estimated consumption that submit will record, and whether the supervisor logged any actuals.
+  // Used to list the estimate in the submit confirmation when nothing was edited.
+  const consumptionPreview = (() => {
+    const lines: string[] = []
+    let anyActual = false
+    for (const s of includedSubs) {
+      const opt = subOptById.get(s.subActivityId)
+      if (!opt || opt.type !== 'MEASURED') continue
+      const qty = Number(s.quantityDone) || 0
+      if (qty <= 0) continue
+      if (s.materials.some((m) => m.materialId && Number(m.quantity) > 0)) anyActual = true
+      for (const bm of opt.budgetMaterials) {
+        lines.push(`${bm.materialName} ${formatConsumptionQty(bm.qtyPerUnit * qty, bm.unit)} ${bm.unit}`)
+      }
+    }
+    return { lines, anyActual }
+  })()
+  const showConsumptionEstimate = consumptionPreview.lines.length > 0 && !consumptionPreview.anyActual
 
   const buildPayload = useCallback(() => {
     const s = stateRef.current
@@ -264,7 +284,11 @@ export function ReportForm({
       <ConfirmDialog
         open={confirmOpen}
         title="Submit report"
-        message={`Submit the report for ${report.project.name} on ${formatDate(report.reportDate)}? You can recall it until it's reviewed.`}
+        message={
+          showConsumptionEstimate
+            ? `Submit the report for ${report.project.name} on ${formatDate(report.reportDate)}? This will record the estimated material consumption — ${consumptionPreview.lines.join(' · ')}. Confirm, or go back to enter actual quantities. You can recall it until it's reviewed.`
+            : `Submit the report for ${report.project.name} on ${formatDate(report.reportDate)}? You can recall it until it's reviewed.`
+        }
         confirmLabel="Submit"
         loading={saving}
         onConfirm={onSubmit}

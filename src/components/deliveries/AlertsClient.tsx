@@ -13,6 +13,7 @@ const TYPE_LABEL: Record<AlertView['type'], string> = {
   MISSING_ATTACHMENT: 'Missing attachment',
   COUNT_VARIANCE: 'Count variance',
   NEGATIVE_BALANCE: 'Negative balance',
+  MISSING_CONSUMPTION_RATE: 'Missing consumption rate',
 }
 
 export function AlertsClient({ initialAlerts }: { initialAlerts: AlertView[] }) {
@@ -55,6 +56,13 @@ export function AlertsClient({ initialAlerts }: { initialAlerts: AlertView[] }) 
                   <p className="mt-1 text-sm text-fg-muted">
                     {a.source.supplierName} · note {a.source.deliveryNoteNumber} ·{' '}
                     <Link href={`/reports/${a.source.reportId}`} className="font-medium text-primary-700 hover:underline">{a.source.reportCode}</Link>
+                  </p>
+                )}
+                {a.work && (
+                  <p className="mt-1 text-sm text-fg-muted">
+                    {a.work.subActivityName} ·{' '}
+                    <Link href={`/reports/${a.work.reportId}`} className="font-medium text-primary-700 hover:underline">{a.work.reportCode}</Link>
+                    {' '}· no consumption rate set
                   </p>
                 )}
                 {a.materialName && <p className="mt-1 text-sm text-fg-muted">{a.materialName}{a.quantity != null ? ` · ${a.quantity}` : ''}</p>}
