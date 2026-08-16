@@ -10,7 +10,7 @@ import { WEATHER_OPTIONS, validateForSubmit, computeManpowerTotals, type SubActi
 import { ActivityCard, emptySubHelper } from '@/components/reports/ActivityCard'
 import { DeliveriesSection, type SupplierOption } from '@/components/deliveries/DeliveriesSection'
 import type { DeliveryView } from '@/lib/deliveries/types'
-import { formatConsumptionQty } from '@/lib/consumption/format'
+import { aggregateConsumptionSummary } from '@/lib/consumption/summary'
 import {
   type ActivityRow,
   type SubRow,
@@ -27,7 +27,7 @@ export interface ReportEntry {
   percentComplete: number | null
   note: string | null
   manpower: { categoryId: string; headcount: number; hours: number }[]
-  materials: { materialId: string; quantity: number }[]
+  materials: { materialId: string; quantity: number; quantityTouched?: boolean | null }[]
 }
 export interface ReportFormData {
   id: string
@@ -96,24 +96,20 @@ export function ReportForm({
   const includedSubs = rows.flatMap((r) => r.subs.filter((s) => s.included))
   const totals = computeManpowerTotals(includedSubs.flatMap((s) => s.manpower.map((m) => ({ headcount: Number(m.headcount), hours: Number(m.hours) }))))
 
-  // Estimated consumption that submit will record, and whether the supervisor logged any actuals.
-  // Used to list the estimate in the submit confirmation when nothing was edited.
-  const consumptionPreview = (() => {
-    const lines: string[] = []
-    let anyActual = false
-    for (const s of includedSubs) {
+  // Estimated consumption submit will record — aggregated by material (one row per material,
+  // summed across sub-activities). Shown in the submit confirmation only when nothing was edited.
+  const consumptionSummary = aggregateConsumptionSummary(
+    includedSubs.map((s) => {
       const opt = subOptById.get(s.subActivityId)
-      if (!opt || opt.type !== 'MEASURED') continue
-      const qty = Number(s.quantityDone) || 0
-      if (qty <= 0) continue
-      if (s.materials.some((m) => m.materialId && Number(m.quantity) > 0)) anyActual = true
-      for (const bm of opt.budgetMaterials) {
-        lines.push(`${bm.materialName} ${formatConsumptionQty(bm.qtyPerUnit * qty, bm.unit)} ${bm.unit}`)
+      return {
+        type: (opt?.type ?? 'MEASURED') as 'MEASURED' | 'LUMPSUM',
+        quantityDone: Number(s.quantityDone) || 0,
+        anyTouched: s.materials.some((m) => m.materialId && m.touched),
+        budgetMaterials: opt?.budgetMaterials ?? [],
       }
-    }
-    return { lines, anyActual }
-  })()
-  const showConsumptionEstimate = consumptionPreview.lines.length > 0 && !consumptionPreview.anyActual
+    }),
+  )
+  const showConsumptionEstimate = consumptionSummary.rows.length > 0 && !consumptionSummary.anyTouched
 
   const buildPayload = useCallback(() => {
     const s = stateRef.current
@@ -128,7 +124,7 @@ export function ReportForm({
           percentComplete: Number(sub.percentComplete) || 0,
           note: sub.note.trim() || null,
           manpower: sub.manpower.filter((m) => m.categoryId !== '').map((m) => ({ categoryId: m.categoryId, headcount: Number(m.headcount) || 0, hours: Number(m.hours) || 0 })),
-          materials: sub.materials.filter((m) => m.materialId !== '').map((m) => ({ materialId: m.materialId, quantity: Number(m.quantity) || 0 })),
+          materials: sub.materials.filter((m) => m.materialId !== '').map((m) => ({ materialId: m.materialId, quantity: Number(m.quantity) || 0, quantityTouched: m.touched === true })),
         })),
     }
   }, [])
@@ -286,8 +282,32 @@ export function ReportForm({
         title="Submit report"
         message={
           showConsumptionEstimate
-            ? `Submit the report for ${report.project.name} on ${formatDate(report.reportDate)}? This will record the estimated material consumption — ${consumptionPreview.lines.join(' · ')}. Confirm, or go back to enter actual quantities. You can recall it until it's reviewed.`
+            ? `Submitting will record this estimated material consumption. Go back to enter actual quantities, or confirm — you can recall the report until it's reviewed.`
             : `Submit the report for ${report.project.name} on ${formatDate(report.reportDate)}? You can recall it until it's reviewed.`
+        }
+        details={
+          showConsumptionEstimate ? (
+            <div className="mt-3 overflow-x-auto rounded-md border border-border">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-fg-subtle">
+                    <th className="px-3 py-2 font-semibold">Material</th>
+                    <th className="px-3 py-2 text-right font-semibold">Quantity</th>
+                    <th className="px-3 py-2 font-semibold">Unit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {consumptionSummary.rows.map((r) => (
+                    <tr key={r.materialId} className="border-b border-border last:border-0">
+                      <td className="px-3 py-2 text-fg">{r.name}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-fg">{r.quantity}</td>
+                      <td className="px-3 py-2 text-fg-muted">{r.unit}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : undefined
         }
         confirmLabel="Submit"
         loading={saving}
@@ -320,7 +340,7 @@ function buildInitialRows(entries: ReportEntry[], scope: AssetOption[]): Activit
             percentComplete: e.percentComplete != null ? String(e.percentComplete) : '',
             note: e.note ?? '',
             manpower: e.manpower.map((m) => ({ key: newKey(), categoryId: m.categoryId, headcount: String(m.headcount), hours: String(m.hours) })),
-            materials: e.materials.map((m) => ({ key: newKey(), materialId: m.materialId, quantity: String(m.quantity) })),
+            materials: e.materials.map((m) => ({ key: newKey(), materialId: m.materialId, quantity: String(m.quantity), touched: m.quantityTouched === true })),
           }
         }),
       })

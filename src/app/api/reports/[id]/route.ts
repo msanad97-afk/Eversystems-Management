@@ -79,7 +79,7 @@ interface ParsedSub {
   percentComplete: number
   note: string | null
   manpower: { categoryId: string; headcount: number; hours: number; notes: string | null }[]
-  materials: { materialId: string; quantity: number; notes: string | null }[]
+  materials: { materialId: string; quantity: number; notes: string | null; quantityTouched: boolean }[]
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -119,7 +119,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           .map((m) => ({ categoryId: m.categoryId as string, headcount: Math.trunc(num(m.headcount)), hours: num(m.hours), notes: str(m.notes) })),
         materials: rawX
           .filter((m): m is Record<string, unknown> => isRecord(m) && typeof m.materialId === 'string')
-          .map((m) => ({ materialId: m.materialId as string, quantity: num(m.quantity), notes: str(m.notes) })),
+          .map((m) => ({ materialId: m.materialId as string, quantity: num(m.quantity), notes: str(m.notes), quantityTouched: m.quantityTouched === true })),
       }
     })
 

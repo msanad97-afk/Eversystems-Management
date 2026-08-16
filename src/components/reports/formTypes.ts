@@ -9,6 +9,8 @@ export interface MatRow {
   key: string
   materialId: string
   quantity: string
+  /** Stage 2C-1: true once the supervisor edits this quantity; a pre-filled estimate stays false. */
+  touched?: boolean
 }
 
 /** One reportable line = one sub-activity (implicit ones render at the activity level). */

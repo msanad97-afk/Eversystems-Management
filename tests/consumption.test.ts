@@ -9,13 +9,19 @@ describe('deriveSubConsumption', () => {
     expect(out).toEqual([{ materialId: 'm', unit: 'bag', quantity: 19.6, source: 'ESTIMATED', estimateRate: 0.28 }])
   })
 
-  it('edited (logged) budget material → ACTUAL with the typed value, rate still recorded', () => {
-    const out = deriveSubConsumption(70, [{ materialId: 'm', unit: 'bag', estimateRate: 0.28 }], [{ materialId: 'm', unit: 'bag', quantity: 18 }])
+  it('edited (touched) budget material → ACTUAL with the typed value, rate still recorded', () => {
+    const out = deriveSubConsumption(70, [{ materialId: 'm', unit: 'bag', estimateRate: 0.28 }], [{ materialId: 'm', unit: 'bag', quantity: 18, touched: true }])
     expect(out[0]).toEqual({ materialId: 'm', unit: 'bag', quantity: 18, source: 'ACTUAL', estimateRate: 0.28 })
   })
 
+  it('untouched pre-filled row (stored rounded 20) → ESTIMATED recomputed exact, ignoring the stored value', () => {
+    // The row carries the rounded display value 20, but is untouched → server recomputes 0.28 × 70 = 19.6.
+    const out = deriveSubConsumption(70, [{ materialId: 'm', unit: 'bag', estimateRate: 0.28 }], [{ materialId: 'm', unit: 'bag', quantity: 20, touched: false }])
+    expect(out[0]).toEqual({ materialId: 'm', unit: 'bag', quantity: 19.6, source: 'ESTIMATED', estimateRate: 0.28 })
+  })
+
   it('a logged material with no budget rate → ACTUAL, no estimateRate', () => {
-    const out = deriveSubConsumption(70, [], [{ materialId: 'x', unit: 'kg', quantity: 5.25 }])
+    const out = deriveSubConsumption(70, [], [{ materialId: 'x', unit: 'kg', quantity: 5.25, touched: true }])
     expect(out).toEqual([{ materialId: 'x', unit: 'kg', quantity: 5.25, source: 'ACTUAL', estimateRate: null }])
   })
 

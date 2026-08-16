@@ -14,6 +14,7 @@ import {
   type MaterialOption,
   newKey,
 } from '@/components/reports/formTypes'
+import { applyEstimatePrefill } from '@/lib/consumption/prefill'
 
 function findActivity(assets: AssetOption[], activityId: string): ActivityOption | undefined {
   for (const a of assets) {
@@ -174,7 +175,10 @@ function SubLine({
             label="Quantity done today"
             type="number" inputMode="decimal" min={0} step="any"
             value={sub.quantityDone}
-            onChange={(e) => onChange({ ...sub, quantityDone: e.target.value })}
+            onChange={(e) =>
+              // Recompute the pre-filled estimate for UNtouched material rows only.
+              onChange({ ...sub, quantityDone: e.target.value, materials: applyEstimatePrefill(sub.materials, opt.budgetMaterials, Number(e.target.value) || 0) })
+            }
             hint={`Remaining ${opt.remaining} of ${opt.boqQuantity}`}
           />
         </div>
@@ -278,8 +282,14 @@ function MaterialEditor({
                 <option value="">Material…</option>
                 {materials.map((m) => (<option key={m.id} value={m.id}>{m.name}{m.isActive ? '' : ' (inactive)'}</option>))}
               </select>
-              <input type="number" inputMode="decimal" min={0} step="any" placeholder="Qty" value={r.quantity} onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))} className="w-20 rounded-md border border-border bg-surface px-2 py-1.5 text-sm tabular-nums text-fg" />
-              <span className="w-10 text-xs text-fg-subtle">{mat?.unit ?? ''}</span>
+              <input
+                type="number" inputMode="decimal" min={0} step="any" placeholder="Qty"
+                value={r.quantity}
+                // Editing the quantity marks the row ACTUAL (touched); a pre-filled estimate stays untouched.
+                onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, quantity: e.target.value, touched: true } : x)))}
+                className={`w-20 rounded-md border border-border bg-surface px-2 py-1.5 text-sm tabular-nums ${budget && !r.touched && r.quantity !== '' ? 'italic text-fg-muted' : 'text-fg'}`}
+              />
+              <span className="w-12 text-xs text-fg-subtle">{mat?.unit ?? ''}{budget && !r.touched && r.quantity !== '' ? ' est' : ''}</span>
               <button type="button" onClick={() => onChange(rows.filter((_, j) => j !== i))} className="text-fg-subtle hover:text-danger" aria-label="Remove material row">✕</button>
             </div>
             {/* Budget visibility: measured lines only (lumpsum subs have no BOQ quantity). */}

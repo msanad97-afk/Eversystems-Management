@@ -536,6 +536,11 @@ model MaterialEntry {
   materialId          String
   quantity            Decimal @db.Decimal(12, 3)
   notes               String?
+  // Stage 2C-1: true once the supervisor edits this row's quantity; a pre-filled estimate stays
+  // null/false. Persisted (not client state) because a draft can be saved and submitted across
+  // sessions, so the flag must survive a page reload. On submit it decides ESTIMATED (server
+  // recomputes the exact rate × quantityDone) vs ACTUAL (the stored typed value).
+  quantityTouched     Boolean? // additive, nullable — no default needed
 
   // Phase 6: cost snapshot, populated once on report approval.
   rateAtApproval Decimal? @db.Decimal(12, 3)

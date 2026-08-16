@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 
@@ -7,6 +8,7 @@ export function ConfirmDialog({
   open,
   title,
   message,
+  details,
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   danger = false,
@@ -17,6 +19,8 @@ export function ConfirmDialog({
   open: boolean
   title: string
   message: string
+  /** Optional richer content rendered below the message (e.g. a table). Message stays a plain string. */
+  details?: ReactNode
   confirmLabel?: string
   cancelLabel?: string
   danger?: boolean
@@ -41,6 +45,7 @@ export function ConfirmDialog({
       }
     >
       <p className="text-sm text-fg-muted">{message}</p>
+      {details}
     </Modal>
   )
 }

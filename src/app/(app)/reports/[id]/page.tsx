@@ -82,7 +82,7 @@ export default async function ReportPage({ params }: { params: { id: string } })
             percentComplete: rs.percentComplete == null ? null : Number(rs.percentComplete),
             note: rs.note,
             manpower: rs.manpower.map((m) => ({ categoryId: m.categoryId, headcount: m.headcount, hours: Number(m.hours) })),
-            materials: rs.materials.map((m) => ({ materialId: m.materialId, quantity: Number(m.quantity) })),
+            materials: rs.materials.map((m) => ({ materialId: m.materialId, quantity: Number(m.quantity), quantityTouched: m.quantityTouched })),
           })),
         }}
         scope={formScope}

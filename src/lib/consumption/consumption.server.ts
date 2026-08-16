@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client'
-import { deriveSubConsumption, type BudgetRate, type ActualEntry } from '@/lib/consumption/derive'
+import { deriveSubConsumption, type BudgetRate, type MaterialEntryInput } from '@/lib/consumption/derive'
 
 /**
  * On report submit: record derived material consumption for every reported measured sub-activity.
@@ -30,7 +30,7 @@ export async function recordConsumptionOnSubmit(
       subActivityId: true,
       quantityDone: true,
       subActivity: { select: { type: true } },
-      materials: { select: { materialId: true, quantity: true, material: { select: { unit: true } } } },
+      materials: { select: { materialId: true, quantity: true, quantityTouched: true, material: { select: { unit: true } } } },
     },
   })
   const measured = reportSubs.filter((rs) => rs.subActivity.type === 'MEASURED' && Number(rs.quantityDone) > 0)
@@ -57,8 +57,8 @@ export async function recordConsumptionOnSubmit(
       missingRateSubReportIds.push(rs.id) // no rate → derive nothing, flag it
       continue
     }
-    const actuals: ActualEntry[] = rs.materials.map((m) => ({ materialId: m.materialId, unit: m.material.unit, quantity: Number(m.quantity) }))
-    for (const d of deriveSubConsumption(Number(rs.quantityDone), budget, actuals)) {
+    const entries: MaterialEntryInput[] = rs.materials.map((m) => ({ materialId: m.materialId, unit: m.material.unit, quantity: Number(m.quantity), touched: m.quantityTouched === true }))
+    for (const d of deriveSubConsumption(Number(rs.quantityDone), budget, entries)) {
       entryData.push({
         dailyReportId: reportId,
         projectId,
