@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { signOut } from 'next-auth/react'
 import { Logo } from '@/components/ui/Logo'
+import { MobileNav } from '@/components/layout/MobileNav'
 import type { SessionUser } from '@/types/next-auth'
 
 const ROLE_LABEL: Record<SessionUser['role'], string> = {
@@ -28,9 +29,12 @@ export function Topbar({ user }: { user: SessionUser }) {
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border bg-surface px-4">
-      <Link href="/" className="flex items-center" aria-label="Eversystems Management home">
-        <Logo size={30} withWordmark />
-      </Link>
+      <div className="flex items-center gap-1">
+        <MobileNav role={user.role} />
+        <Link href="/" className="flex items-center" aria-label="Eversystems Management home">
+          <Logo size={30} withWordmark />
+        </Link>
+      </div>
 
       <div className="relative" ref={menuRef}>
         <button
