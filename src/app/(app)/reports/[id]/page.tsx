@@ -6,6 +6,8 @@ import { canReadReport, canAuthorReport } from '@/lib/reports/query'
 import { canEdit, cumulativePercent } from '@/lib/reports/rules'
 import { loadFormScope, earnedBySubActivity } from '@/lib/reports/progress'
 import { loadReportDeliveries } from '@/lib/deliveries/deliveries.server'
+import { loadReportStockCount } from '@/lib/inventory/stockCount.server'
+import { loadMaterialBalances } from '@/lib/inventory/balance.server'
 import { ReportForm } from '@/components/reports/ReportForm'
 import { ReportReadOnlyView } from '@/components/reports/ReportReadOnlyView'
 import { ReviewActions } from '@/components/reports/ReviewActions'
@@ -50,13 +52,16 @@ export default async function ReportPage({ params }: { params: { id: string } })
   const reportSubs = report.activities.flatMap((ra) => ra.subActivities)
 
   if (editable) {
-    const [formScope, activeCats, activeMats, deliveries, activeSuppliers] = await Promise.all([
+    const [formScope, activeCats, activeMats, deliveries, activeSuppliers, stockCount, balanceRows] = await Promise.all([
       loadFormScope(report.projectId, report.id),
       prisma.laborCategory.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true, isActive: true } }),
       prisma.material.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true, unit: true, isActive: true, supplierId: true } }),
       loadReportDeliveries(report.id),
       prisma.supplier.findMany({ where: { isActive: true }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+      loadReportStockCount(report.id),
+      loadMaterialBalances(prisma, [report.projectId]),
     ])
+    const balances = balanceRows.map((b) => ({ materialId: b.materialId, onHand: b.onHand, unit: b.unit }))
 
     const catMap = new Map<string, CategoryOption>(activeCats.map((c) => [c.id, c]))
     const matMap = new Map<string, MaterialOption>(activeMats.map((m) => [m.id, m]))
@@ -90,6 +95,8 @@ export default async function ReportPage({ params }: { params: { id: string } })
         materials={Array.from(matMap.values())}
         deliveries={deliveries}
         suppliers={activeSuppliers}
+        stockCount={stockCount}
+        balances={balances}
       />
     )
   }

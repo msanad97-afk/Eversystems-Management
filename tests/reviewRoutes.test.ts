@@ -21,7 +21,12 @@ vi.mock('@/lib/prisma', () => ({
     delivery: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
     inventoryAlert: { findMany: vi.fn().mockResolvedValue([]), createMany: vi.fn().mockResolvedValue({}) },
     // Stage 2C-1: submit records the derived consumption ledger (no reported subs here → no-op).
-    consumptionEntry: { count: vi.fn().mockResolvedValue(0), createMany: vi.fn().mockResolvedValue({}) },
+    consumptionEntry: { count: vi.fn().mockResolvedValue(0), createMany: vi.fn().mockResolvedValue({}), groupBy: vi.fn().mockResolvedValue([]) },
+    // Stage 2C-2: submit reconciles stock counts + raises NEGATIVE_BALANCE alerts (no counts here → no-op).
+    stockCount: { deleteMany: vi.fn().mockResolvedValue({}), create: vi.fn().mockResolvedValue({}) },
+    stockCountLine: { findMany: vi.fn().mockResolvedValue([]) },
+    deliveryLine: { findMany: vi.fn().mockResolvedValue([]) },
+    material: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: vi.fn(),
   },
 }))

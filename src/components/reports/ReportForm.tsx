@@ -9,7 +9,9 @@ import { useToast } from '@/contexts/ToastContext'
 import { WEATHER_OPTIONS, validateForSubmit, computeManpowerTotals, type SubActivityInput } from '@/lib/reports/rules'
 import { ActivityCard, emptySubHelper } from '@/components/reports/ActivityCard'
 import { DeliveriesSection, type SupplierOption } from '@/components/deliveries/DeliveriesSection'
+import { StockCountSection, type StockBalanceHint } from '@/components/inventory/StockCountSection'
 import type { DeliveryView } from '@/lib/deliveries/types'
+import type { StockCountView } from '@/lib/inventory/stockCount.server'
 import { aggregateConsumptionSummary } from '@/lib/consumption/summary'
 import {
   type ActivityRow,
@@ -54,6 +56,8 @@ export function ReportForm({
   materials,
   deliveries,
   suppliers,
+  stockCount,
+  balances,
 }: {
   report: ReportFormData
   scope: AssetOption[]
@@ -61,6 +65,8 @@ export function ReportForm({
   materials: MaterialOption[]
   deliveries: DeliveryView[]
   suppliers: SupplierOption[]
+  stockCount: StockCountView | null
+  balances: StockBalanceHint[]
 }) {
   const router = useRouter()
   const { showToast } = useToast()
@@ -260,6 +266,8 @@ export function ReportForm({
       </div>
 
       <DeliveriesSection reportId={report.id} initialDeliveries={deliveries} materials={materials} suppliers={suppliers} onCountChange={setDeliveryCount} />
+
+      <StockCountSection reportId={report.id} initialStockCount={stockCount} materials={materials} balances={balances} />
 
       <div className="rounded-lg border border-border bg-surface p-4">
         <label className="mb-1 block text-sm font-medium text-fg">General notes</label>

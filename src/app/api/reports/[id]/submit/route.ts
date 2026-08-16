@@ -10,6 +10,7 @@ import { remainingBySubActivity, lumpsumFloorBySubActivity } from '@/lib/reports
 import { notifyReportSubmitted } from '@/lib/notifications'
 import { syncMissingAttachmentAlerts } from '@/lib/deliveries/alerts.server'
 import { recordConsumptionOnSubmit } from '@/lib/consumption/consumption.server'
+import { reconcileStockCountsOnSubmit, syncNegativeBalanceAlerts } from '@/lib/inventory/stockCount.server'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireUser()
@@ -67,14 +68,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const error = validateForSubmit(subs, deliveryCount > 0)
   if (error) return NextResponse.json({ error }, { status: 400 })
 
-  // Submit atomically: status + MISSING_ATTACHMENT alerts + derived consumption ledger.
-  const consumption = await prisma.$transaction(async (tx) => {
+  // Submit atomically: status + MISSING_ATTACHMENT alerts + derived consumption ledger + stock-count
+  // reconciliation (COUNT_ADJUSTMENT entries + COUNT_VARIANCE alerts) + NEGATIVE_BALANCE alerts.
+  const { consumption, stock } = await prisma.$transaction(async (tx) => {
     await tx.dailyReport.update({
       where: { id: report.id },
       data: { status: 'SUBMITTED', submittedAt: new Date(), reviewedById: null, reviewedAt: null, reviewNote: null },
     })
     await syncMissingAttachmentAlerts(tx, report.id, report.projectId)
-    return recordConsumptionOnSubmit(tx, report.id, report.projectId)
+    const consumption = await recordConsumptionOnSubmit(tx, report.id, report.projectId)
+    // Count reconciliation must run before the negative-balance check so it sees the reconciled balance.
+    const reconcile = await reconcileStockCountsOnSubmit(tx, report.id, report.projectId)
+    const negativeAlerts = await syncNegativeBalanceAlerts(tx, report.projectId)
+    return { consumption, stock: { ...reconcile, negativeAlerts } }
   })
 
   writeAuditLog({
@@ -96,6 +102,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       entityId: report.id,
       entityCode: report.reportCode,
       metadata: { entries: consumption.entries, missingRateAlerts: consumption.missingRateAlerts },
+      ipAddress: getClientIp(req),
+    })
+  }
+
+  if (stock.adjustments > 0 || stock.varianceAlerts > 0 || stock.negativeAlerts > 0) {
+    writeAuditLog({
+      action: 'STOCK_COUNT_RECORDED',
+      userId: guard.user.id,
+      projectId: report.projectId,
+      entity: 'DailyReport',
+      entityId: report.id,
+      entityCode: report.reportCode,
+      metadata: { adjustments: stock.adjustments, varianceAlerts: stock.varianceAlerts, negativeAlerts: stock.negativeAlerts },
       ipAddress: getClientIp(req),
     })
   }

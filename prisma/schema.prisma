@@ -106,6 +106,8 @@ enum AuditAction {
   SUPPLIER_CREATED
   SUPPLIER_UPDATED
   CONSUMPTION_RECORDED
+  STOCK_COUNT_RECORDED
+  STOCK_COUNT_ACKNOWLEDGED
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -139,6 +141,7 @@ model User {
 
   deliveries         Delivery[]       @relation("DeliveryCreatedBy")
   acknowledgedAlerts InventoryAlert[] @relation("AlertAcknowledgedBy")
+  stockCounts        StockCount[]     @relation("StockCountCountedBy")
 }
 
 // ─── PROJECTS (SITES) ──────────────────────────────────────────────────────────
@@ -184,6 +187,7 @@ model Project {
   materialRequests MaterialRequest[]
   inventoryAlerts  InventoryAlert[]
   consumptionEntries ConsumptionEntry[]
+  stockCounts        StockCount[]
 }
 
 model ProjectMember {
@@ -232,6 +236,7 @@ model Material {
   deliveryLines      DeliveryLine[]
   inventoryAlerts    InventoryAlert[]
   consumptionEntries ConsumptionEntry[]
+  stockCountLines    StockCountLine[]
 
   @@index([supplierId])
 }
@@ -345,6 +350,7 @@ model DailyReport {
   activities        ReportActivity[]
   deliveries        Delivery[]
   consumptionEntries ConsumptionEntry[]
+  stockCounts        StockCount[]
 
   @@unique([projectId, reportDate, authorId])
   @@index([projectId, reportDate])
@@ -947,4 +953,45 @@ model ConsumptionEntry {
 enum InventoryAlertStatus {
   OPEN
   ACKNOWLEDGED
+}
+
+// ─── STOCK COUNTS (Stage 2C-2) ────────────────────────────────────────────────
+// A physical stock count entered by the supervisor on a daily report, in its own section.
+// Partial counts are legal — a count is just its lines; a material absent from the count is
+// untouched. Each line snapshots the system-expected quantity (the derived balance at entry)
+// and stores the variance (counted − system). On report submit, a non-zero variance writes a
+// COUNT_ADJUSTMENT ConsumptionEntry so the derived balance reconciles to the counted figure,
+// and raises a COUNT_VARIANCE alert. History is never rewritten — adjustments flow forward.
+// Quantities only — NO cost anywhere.
+model StockCount {
+  id            String   @id @default(cuid())
+  dailyReportId String
+  projectId     String // denormalised for balance/inventory queries
+  countedById   String
+  countedAt     DateTime @default(now())
+  notes         String?
+
+  dailyReport DailyReport      @relation(fields: [dailyReportId], references: [id], onDelete: Cascade)
+  project     Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  countedBy   User             @relation("StockCountCountedBy", fields: [countedById], references: [id])
+  lines       StockCountLine[]
+
+  @@index([projectId])
+  @@index([dailyReportId])
+}
+
+model StockCountLine {
+  id              String  @id @default(cuid())
+  stockCountId    String
+  materialId      String
+  countedQuantity Decimal @db.Decimal(12, 3)
+  systemQuantity  Decimal @db.Decimal(12, 3) // derived-balance snapshot at entry
+  variance        Decimal @db.Decimal(12, 3) // counted − system, stored (never re-derived)
+  unit            String // snapshot at entry
+
+  stockCount StockCount @relation(fields: [stockCountId], references: [id], onDelete: Cascade)
+  material   Material   @relation(fields: [materialId], references: [id])
+
+  @@index([stockCountId])
+  @@index([materialId])
 }
