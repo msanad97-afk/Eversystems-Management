@@ -6,9 +6,10 @@ import type { Prisma, PrismaClient } from '@prisma/client'
  *   on_hand = Σ DeliveryLine.quantity − Σ ConsumptionEntry.quantity   (per project, per material)
  *
  * The balance is NEVER stored — it is always derived here, so the stock-count entry screen and the
- * inventory page agree by construction (do not compute this anywhere else). Consumption is summed
- * across ALL sources (ESTIMATED + ACTUAL + COUNT_ADJUSTMENT); the estimated/actual split is reported
- * separately as a trust indicator. Quantities only — NO cost is read on this path.
+ * inventory page agree by construction (do not compute this anywhere else). `onHand` nets ALL
+ * consumption sources (ESTIMATED + ACTUAL + COUNT_ADJUSTMENT) so it equals the last counted figure,
+ * but the reported `consumed` deliberately EXCLUDES COUNT_ADJUSTMENT (those are reconciliations, not
+ * usage) — the adjustment is surfaced on its own as `countAdjustment`. Quantities only — NO cost.
  */
 
 export interface MaterialBalance {
@@ -17,24 +18,31 @@ export interface MaterialBalance {
   materialName: string
   unit: string
   delivered: number
-  consumed: number
-  onHand: number
+  consumed: number // Σ ESTIMATED + ACTUAL only — real usage, never count adjustments
+  onHand: number // delivered − ALL consumption (incl. adjustments) → equals the last counted figure
   estimatedPortion: number // Σ consumption where source = ESTIMATED
   actualPortion: number // Σ consumption where source = ACTUAL
+  // Net count adjustment from the SITE's perspective: a count finding MORE than expected reads as a
+  // surplus (+), finding LESS as a shortfall (−). The ledger stores each COUNT_ADJUSTMENT as
+  // (system − counted), so this is the negation of their sum.
+  countAdjustment: number
   lastCountedAt: Date | null
 }
 
 type Db = Prisma.TransactionClient | PrismaClient
 
-const round3 = (n: number) => Math.round(n * 1000) / 1000
+const round3 = (n: number) => {
+  const v = Math.round(n * 1000) / 1000
+  return Object.is(v, -0) ? 0 : v // negating a zero adjustment must read as 0, not −0
+}
 
 interface Acc {
   projectId: string
   materialId: string
   delivered: number
-  consumed: number
   estimated: number
   actual: number
+  countAdjLedger: number // Σ COUNT_ADJUSTMENT quantity as stored (system − counted)
   lastCountedAt: Date | null
 }
 
@@ -65,7 +73,7 @@ export async function loadMaterialBalances(db: Db, projectIds: string[]): Promis
     const k = key(projectId, materialId)
     let row = acc.get(k)
     if (!row) {
-      row = { projectId, materialId, delivered: 0, consumed: 0, estimated: 0, actual: 0, lastCountedAt: null }
+      row = { projectId, materialId, delivered: 0, estimated: 0, actual: 0, countAdjLedger: 0, lastCountedAt: null }
       acc.set(k, row)
     }
     return row
@@ -77,9 +85,9 @@ export async function loadMaterialBalances(db: Db, projectIds: string[]): Promis
   for (const c of consumption) {
     const row = ensure(c.projectId, c.materialId)
     const q = Number(c._sum.quantity ?? 0)
-    row.consumed += q
     if (c.source === 'ESTIMATED') row.estimated += q
     else if (c.source === 'ACTUAL') row.actual += q
+    else if (c.source === 'COUNT_ADJUSTMENT') row.countAdjLedger += q
   }
   for (const l of countLines) {
     const row = ensure(l.stockCount.projectId, l.materialId)
@@ -93,16 +101,18 @@ export async function loadMaterialBalances(db: Db, projectIds: string[]): Promis
   return [...acc.values()]
     .map((r): MaterialBalance => {
       const m = mById.get(r.materialId)
+      const consumed = r.estimated + r.actual // real usage only — excludes count adjustments
       return {
         projectId: r.projectId,
         materialId: r.materialId,
         materialName: m?.name ?? '(unknown material)',
         unit: m?.unit ?? '',
         delivered: round3(r.delivered),
-        consumed: round3(r.consumed),
-        onHand: round3(r.delivered - r.consumed),
+        consumed: round3(consumed),
+        onHand: round3(r.delivered - consumed - r.countAdjLedger), // nets adjustments → equals last count
         estimatedPortion: round3(r.estimated),
         actualPortion: round3(r.actual),
+        countAdjustment: round3(-r.countAdjLedger), // site perspective: surplus +, shortfall −
         lastCountedAt: r.lastCountedAt,
       }
     })

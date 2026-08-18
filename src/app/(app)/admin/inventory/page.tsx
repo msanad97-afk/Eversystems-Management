@@ -48,6 +48,7 @@ export default async function AdminInventoryPage({
                   <th className="px-3 py-2 font-semibold">Material</th>
                   <th className="px-3 py-2 text-right font-semibold">Delivered</th>
                   <th className="px-3 py-2 text-right font-semibold">Consumed</th>
+                  <th className="px-3 py-2 text-right font-semibold">Count adj.</th>
                   <th className="px-3 py-2 text-right font-semibold">On hand</th>
                   <th className="px-3 py-2 text-right font-semibold">Estimated</th>
                   <th className="px-3 py-2 text-right font-semibold">Actual</th>
@@ -57,16 +58,20 @@ export default async function AdminInventoryPage({
               <tbody>
                 {g.rows.map((r) => {
                   const negative = r.onHand < 0
+                  const adj = r.countAdjustment // site perspective: + surplus, − shortfall
                   return (
                     <tr key={r.materialId} className={`border-b border-border last:border-0 ${negative ? 'bg-danger-bg' : ''}`}>
                       <td className="px-3 py-2 text-fg">{r.materialName}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-fg-muted">{fmtQty(r.delivered)} {r.unit}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-fg-muted">{fmtQty(r.consumed)} {r.unit}</td>
+                      <td className={`px-3 py-2 text-right tabular-nums ${adj === 0 ? 'text-fg-subtle' : adj < 0 ? 'text-danger' : 'text-fg-muted'}`}>
+                        {adj === 0 ? '—' : `${adj > 0 ? '+' : ''}${fmtQty(adj)} ${r.unit}`}
+                      </td>
                       <td className={`px-3 py-2 text-right tabular-nums font-medium ${negative ? 'text-danger' : 'text-fg'}`}>
                         {fmtQty(r.onHand)} {r.unit}{negative ? ' ⚠' : ''}
                       </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-fg-subtle">{fmtQty(r.estimatedPortion)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-fg-subtle">{fmtQty(r.actualPortion)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-fg-subtle">{fmtQty(r.estimatedPortion)} {r.unit}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-fg-subtle">{fmtQty(r.actualPortion)} {r.unit}</td>
                       <td className="px-3 py-2 text-fg-muted">{fmtDate(r.lastCountedAt)}</td>
                     </tr>
                   )

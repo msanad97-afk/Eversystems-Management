@@ -27,7 +27,8 @@ beforeAll(async () => {
   const sand = await prisma.material.create({ data: { name: `Sand ${sfx}`, unit: 'm3' } })
   const steel = await prisma.material.create({ data: { name: `Steel ${sfx}`, unit: 'kg' } })
   const paint = await prisma.material.create({ data: { name: `Paint ${sfx}`, unit: 'litre' } })
-  ids.cement = cement.id; ids.sand = sand.id; ids.steel = steel.id; ids.paint = paint.id
+  const tile = await prisma.material.create({ data: { name: `Tile ${sfx}`, unit: 'box' } })
+  ids.cement = cement.id; ids.sand = sand.id; ids.steel = steel.id; ids.paint = paint.id; ids.tile = tile.id
 
   // Seed report carries the deliveries + consumption that establish the balances.
   const seed = await prisma.dailyReport.create({
@@ -41,6 +42,7 @@ beforeAll(async () => {
             { materialId: sand.id, quantity: 50, unit: 'm3' },
             { materialId: steel.id, quantity: 20, unit: 'kg' },
             { materialId: paint.id, quantity: 10, unit: 'litre' },
+            { materialId: tile.id, quantity: 30, unit: 'box' },
           ] },
         }],
       },
@@ -55,9 +57,10 @@ beforeAll(async () => {
   await mkConsumption(sand.id, 5, 'm3', 'ESTIMATED')
   await mkConsumption(steel.id, 8, 'kg', 'ESTIMATED')
   await mkConsumption(paint.id, 15, 'litre', 'ACTUAL') // 10 delivered − 15 consumed = −5 → negative
-  // Balances now: cement 60, sand 45, steel 12, paint −5.
+  await mkConsumption(tile.id, 10, 'box', 'ESTIMATED')
+  // Balances now: cement 60, sand 45, steel 12, paint −5, tile 20.
 
-  // A report carrying a stock count: cement counted 55 (variance −5), sand counted 45 (variance 0).
+  // A report carrying a stock count: cement counted 55 (shortfall −5), sand 45 (zero), tile 25 (surplus +5).
   const countReport = await prisma.dailyReport.create({
     data: {
       reportCode: `TSTS-${sfx}-COUNT`, projectId: project.id, authorId: user.id, reportDate: new Date('2026-06-02T00:00:00.000Z'), status: 'DRAFT',
@@ -67,6 +70,7 @@ beforeAll(async () => {
           lines: { create: [
             { materialId: cement.id, countedQuantity: 55, systemQuantity: 60, variance: -5, unit: 'bag' },
             { materialId: sand.id, countedQuantity: 45, systemQuantity: 45, variance: 0, unit: 'm3' },
+            { materialId: tile.id, countedQuantity: 25, systemQuantity: 20, variance: 5, unit: 'box' },
           ] },
         }],
       },
@@ -76,13 +80,14 @@ beforeAll(async () => {
   ids.countReportId = countReport.id
   ids.cementLineId = countReport.stockCounts[0]!.lines.find((l) => l.materialId === cement.id)!.id
   ids.sandLineId = countReport.stockCounts[0]!.lines.find((l) => l.materialId === sand.id)!.id
+  ids.tileLineId = countReport.stockCounts[0]!.lines.find((l) => l.materialId === tile.id)!.id
 })
 
 afterAll(async () => {
   if (ids.projectId) await prisma.inventoryAlert.deleteMany({ where: { projectId: ids.projectId } })
   await prisma.dailyReport.deleteMany({ where: { reportCode: { startsWith: `TSTS-${sfx}` } } }) // cascades deliveries, consumption, counts
   if (ids.projectId) await prisma.project.deleteMany({ where: { id: ids.projectId } }) // cascades asset→activity→sub
-  await prisma.material.deleteMany({ where: { id: { in: [ids.cement, ids.sand, ids.steel, ids.paint].filter((x): x is string => Boolean(x)) } } })
+  await prisma.material.deleteMany({ where: { id: { in: [ids.cement, ids.sand, ids.steel, ids.paint, ids.tile].filter((x): x is string => Boolean(x)) } } })
   if (ids.userId) await prisma.user.deleteMany({ where: { id: ids.userId } })
   await prisma.$disconnect()
 })
@@ -101,12 +106,12 @@ describe('derived balance = deliveries − consumption', () => {
 describe('stock-count reconciliation on submit', () => {
   it('a non-zero variance writes a COUNT_ADJUSTMENT that makes the derived balance equal the counted quantity', async () => {
     const res = await prisma.$transaction((tx) => reconcileStockCountsOnSubmit(tx, ids.countReportId!, ids.projectId!))
-    expect(res).toEqual({ adjustments: 1, varianceAlerts: 1 })
+    expect(res).toEqual({ adjustments: 2, varianceAlerts: 2 }) // cement (shortfall) + tile (surplus); sand is zero-variance
 
     const adj = await prisma.consumptionEntry.findMany({ where: { dailyReportId: ids.countReportId, source: 'COUNT_ADJUSTMENT' } })
-    expect(adj.length).toBe(1)
-    expect(adj[0]!.materialId).toBe(ids.cement)
-    expect(Number(adj[0]!.quantity)).toBe(5) // system 60 − counted 55 (positive: material missing)
+    expect(adj.length).toBe(2)
+    const cementAdj = adj.find((a) => a.materialId === ids.cement)!
+    expect(Number(cementAdj.quantity)).toBe(5) // system 60 − counted 55 (positive: material missing)
 
     const cement = await balanceOf(ids.cement!)
     expect(cement!.onHand).toBe(55) // reconciled to the counted figure
@@ -114,6 +119,31 @@ describe('stock-count reconciliation on submit', () => {
     const alert = await prisma.inventoryAlert.findMany({ where: { type: 'COUNT_VARIANCE', sourceRecordId: ids.cementLineId } })
     expect(alert.length).toBe(1)
     expect(Number(alert[0]!.quantity)).toBe(-5) // counted − system
+  })
+
+  it('splits real consumption from the count adjustment: CONSUMED excludes it, ON HAND still nets it', async () => {
+    const cement = await balanceOf(ids.cement!)
+    // Real usage alone in CONSUMED (est 30 + act 10); the −5 shortfall is only in the adjustment column.
+    expect(cement!.consumed).toBe(40)
+    expect(cement!.countAdjustment).toBe(-5) // site perspective: counted less than expected → shortfall
+    expect(cement!.onHand).toBe(55) // still equals the counted figure (nets the adjustment)
+  })
+
+  it('a surplus count reads as a positive adjustment; a shortfall as negative', async () => {
+    const tile = await balanceOf(ids.tile!)
+    expect(tile!.countAdjustment).toBe(5) // counted 25 > system 20 → surplus (+)
+    expect(tile!.consumed).toBe(10) // adjustment not folded into consumed
+    expect(tile!.onHand).toBe(25) // reconciled to the counted figure
+
+    const cement = await balanceOf(ids.cement!)
+    expect(cement!.countAdjustment).toBe(-5) // shortfall (−)
+  })
+
+  it('a material with no count adjustment reports 0 (the page renders this as a dash, not a zero)', async () => {
+    const steel = await balanceOf(ids.steel!) // never counted
+    expect(steel!.countAdjustment).toBe(0)
+    const sand = await balanceOf(ids.sand!) // counted, zero variance → no adjustment
+    expect(sand!.countAdjustment).toBe(0)
   })
 
   it('a zero-variance line writes no adjustment and no alert', async () => {
@@ -132,7 +162,7 @@ describe('stock-count reconciliation on submit', () => {
   it('re-submitting the report does not duplicate adjustments or alerts', async () => {
     const res = await prisma.$transaction((tx) => reconcileStockCountsOnSubmit(tx, ids.countReportId!, ids.projectId!))
     expect(res).toEqual({ adjustments: 0, varianceAlerts: 0 })
-    expect(await prisma.consumptionEntry.count({ where: { dailyReportId: ids.countReportId, source: 'COUNT_ADJUSTMENT' } })).toBe(1)
+    expect(await prisma.consumptionEntry.count({ where: { dailyReportId: ids.countReportId, source: 'COUNT_ADJUSTMENT' } })).toBe(2) // cement + tile, not re-written
     expect((await prisma.inventoryAlert.findMany({ where: { type: 'COUNT_VARIANCE', sourceRecordId: ids.cementLineId } })).length).toBe(1)
   })
 })
@@ -165,7 +195,7 @@ describe('the money wall — no cost on any inventory path', () => {
     expect(serialized).not.toContain('costAtApproval')
     // The balance row exposes only quantity fields.
     expect(Object.keys(balances[0]!).sort()).toEqual(
-      ['actualPortion', 'consumed', 'delivered', 'estimatedPortion', 'lastCountedAt', 'materialId', 'materialName', 'onHand', 'projectId', 'unit'],
+      ['actualPortion', 'consumed', 'countAdjustment', 'delivered', 'estimatedPortion', 'lastCountedAt', 'materialId', 'materialName', 'onHand', 'projectId', 'unit'],
     )
   })
 })
