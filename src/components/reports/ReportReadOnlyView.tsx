@@ -9,6 +9,7 @@ import { computeManpowerTotals } from '@/lib/reports/rules'
 import { useToast } from '@/contexts/ToastContext'
 import type { DeliveryView } from '@/lib/deliveries/types'
 import { DeliveryAttachmentControl } from '@/components/deliveries/DeliveryAttachmentControl'
+import type { StockCountView } from '@/lib/inventory/stockCount.server'
 
 export interface RoManpower { id: string; categoryName: string; headcount: number; hours: number }
 export interface RoMaterial { id: string; materialName: string; unit: string; quantity: number }
@@ -61,7 +62,7 @@ function subLabel(s: RoSub): string {
   return `${s.quantityDone ?? 0} ${s.unit} · ${round1(s.cumulativePercent)}% complete`
 }
 
-export function ReportReadOnlyView({ report, canRecall, deliveries, canUploadAttachments }: { report: ReportDetail; canRecall: boolean; deliveries: DeliveryView[]; canUploadAttachments: boolean }) {
+export function ReportReadOnlyView({ report, canRecall, deliveries, stockCount, canUploadAttachments }: { report: ReportDetail; canRecall: boolean; deliveries: DeliveryView[]; stockCount: StockCountView | null; canUploadAttachments: boolean }) {
   const router = useRouter()
   const { showToast } = useToast()
   const [recalling, setRecalling] = useState(false)
@@ -189,6 +190,36 @@ export function ReportReadOnlyView({ report, canRecall, deliveries, canUploadAtt
                 <DeliveryAttachmentControl reportId={report.id} deliveryId={d.id} hasAttachment={d.hasAttachment} canUpload={canUploadAttachments} />
               </div>
             ))}
+          </div>
+        </section>
+      )}
+
+      {stockCount && stockCount.lines.length > 0 && (
+        <section className="rounded-lg border border-border bg-surface p-4">
+          <div className="mb-2 flex items-baseline justify-between gap-2">
+            <h2 className="font-semibold text-fg">Stock count</h2>
+            {stockCount.countedByName && <span className="text-xs text-fg-subtle">Counted by {stockCount.countedByName}</span>}
+          </div>
+          <div className="rounded-md border border-border p-3">
+            <ul className="space-y-0.5">
+              {stockCount.lines.map((l) => {
+                // Stored variance is counted − system → site perspective already (surplus +, shortfall −).
+                const variance = round1(l.variance)
+                const shortfall = variance < 0
+                return (
+                  <li key={l.id} className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border pb-1 text-sm last:border-0 last:pb-0">
+                    <span className="text-fg">{l.materialName}</span>
+                    <span className="tabular-nums text-fg-muted">
+                      counted {round1(l.countedQuantity)} {l.unit} · system {round1(l.systemQuantity)} {l.unit} ·{' '}
+                      <span className={shortfall ? 'font-medium text-danger' : 'text-fg-muted'}>
+                        {variance === 0 ? 'no variance' : `${variance > 0 ? '+' : ''}${variance} ${l.unit}${shortfall ? ' shortfall' : ' surplus'}`}
+                      </span>
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+            {stockCount.notes && <p className="mt-2 text-sm text-fg-muted">{stockCount.notes}</p>}
           </div>
         </section>
       )}

@@ -103,7 +103,7 @@ export default async function ReportPage({ params }: { params: { id: string } })
 
   // Read-only: measured cumulative % per sub from approved earned; lumpsum earned = % × BHD.
   const measuredSubIds = reportSubs.filter((rs) => rs.subActivity.type === 'MEASURED').map((rs) => rs.subActivityId)
-  const [earned, deliveries] = await Promise.all([earnedBySubActivity(measuredSubIds), loadReportDeliveries(report.id)])
+  const [earned, deliveries, stockCount] = await Promise.all([earnedBySubActivity(measuredSubIds), loadReportDeliveries(report.id), loadReportStockCount(report.id)])
   const canReview = user.role === 'ADMIN' && report.status === 'SUBMITTED'
 
   return (
@@ -115,6 +115,7 @@ export default async function ReportPage({ params }: { params: { id: string } })
       <ReportReadOnlyView
         canRecall={isAuthor && report.status === 'SUBMITTED'}
         deliveries={deliveries}
+        stockCount={stockCount}
         canUploadAttachments={isAuthor || user.role === 'ADMIN'}
         report={{
           id: report.id,

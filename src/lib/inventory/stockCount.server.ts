@@ -16,6 +16,7 @@ export interface StockCountLineView {
 export interface StockCountView {
   id: string
   countedAt: string
+  countedByName: string | null
   notes: string | null
   lines: StockCountLineView[]
 }
@@ -29,6 +30,7 @@ export async function loadReportStockCount(reportId: string): Promise<StockCount
       id: true,
       countedAt: true,
       notes: true,
+      countedBy: { select: { firstName: true, lastName: true } },
       lines: {
         orderBy: { material: { name: 'asc' } },
         select: { id: true, materialId: true, countedQuantity: true, systemQuantity: true, variance: true, unit: true, material: { select: { name: true } } },
@@ -39,6 +41,7 @@ export async function loadReportStockCount(reportId: string): Promise<StockCount
   return {
     id: count.id,
     countedAt: count.countedAt.toISOString(),
+    countedByName: count.countedBy ? `${count.countedBy.firstName} ${count.countedBy.lastName}` : null,
     notes: count.notes,
     lines: count.lines.map((l) => ({
       id: l.id,
