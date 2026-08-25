@@ -108,6 +108,7 @@ enum AuditAction {
   CONSUMPTION_RECORDED
   STOCK_COUNT_RECORDED
   STOCK_COUNT_ACKNOWLEDGED
+  SUBACTIVITY_ADDED
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────

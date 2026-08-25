@@ -41,6 +41,12 @@ export interface CatalogOption {
   unit: string | null
   lumpsumBhd: number | null
 }
+/** Per placed activity: whether it is a flat (implicit-only) line, and the catalogue sub-activities
+ *  on its template that are NOT yet on the placed copy (offered by the add-sub-activity flow). */
+export interface AddSubInfo {
+  implicitOnly: boolean
+  addableCatalogSubs: { id: string; name: string; type: 'MEASURED' | 'LUMPSUM' }[]
+}
 
 function bhd(n: number): string {
   return `BHD ${n.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`
@@ -51,11 +57,13 @@ export function ScopeManager({
   assets,
   unitSuggestions,
   catalogOptions,
+  addSubInfo,
 }: {
   projectId: string
   assets: ScopeAssetData[]
   unitSuggestions: string[]
   catalogOptions: CatalogOption[]
+  addSubInfo: Record<string, AddSubInfo>
 }) {
   const router = useRouter()
   const { showToast } = useToast()
@@ -65,6 +73,7 @@ export function ScopeManager({
   const [assetRef, setAssetRef] = useState('')
   const [editAsset, setEditAsset] = useState<ScopeAssetData | null>(null)
   const [editActivity, setEditActivity] = useState<ScopeActivityData | null>(null)
+  const [addSubActivity, setAddSubActivity] = useState<ScopeActivityData | null>(null)
   const [importResult, setImportResult] = useState<{ ok?: string; errors?: { row: number; message: string }[] } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -278,6 +287,15 @@ export function ScopeManager({
                           {!act.isActive && <Badge tone="neutral" className="ml-2">inactive</Badge>}
                         </div>
                         <Button size="sm" variant="ghost" onClick={() => setEditActivity(act)}>Edit</Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setAddSubActivity(act)}
+                          disabled={!act.isActive || addSubInfo[act.id]?.implicitOnly}
+                          title={addSubInfo[act.id]?.implicitOnly ? 'This flat activity has no named sub-activities; structuring it is not supported yet.' : undefined}
+                        >
+                          Add sub
+                        </Button>
                         <Button size="sm" variant="ghost" onClick={() => reprice(act)}>Re-price</Button>
                         <Button size="sm" variant="ghost" onClick={() => call('PATCH', `/api/activities/${act.id}`, { isActive: !act.isActive })}>
                           {act.isActive ? 'Deactivate' : 'Activate'}
@@ -325,6 +343,23 @@ export function ScopeManager({
               if (await call('PATCH', `/api/activities/${editActivity.id}`, body)) setEditActivity(null)
             }}
             onCancel={() => setEditActivity(null)}
+          />
+        )}
+      </Modal>
+
+      {/* Add sub-activity to a placed activity */}
+      <Modal open={!!addSubActivity} onClose={() => setAddSubActivity(null)} title={addSubActivity ? `Add sub-activity to “${addSubActivity.name}”` : 'Add sub-activity'}>
+        {addSubActivity && (
+          <AddSubActivity
+            activity={addSubActivity}
+            info={addSubInfo[addSubActivity.id]}
+            busy={busy}
+            onAdd={async (body) => {
+              const ok = await call('POST', `/api/activities/${addSubActivity.id}/subactivities`, body)
+              if (ok) showToast('Sub-activity added. BAC and physical % will update on refresh.', 'success')
+              return ok
+            }}
+            onCancel={() => setAddSubActivity(null)}
           />
         )}
       </Modal>
@@ -488,6 +523,100 @@ function AddActivity({
         )}
 
         <Button size="sm" onClick={submit} loading={busy} disabled={!valid} aria-label={`Add activity to asset ${assetId}`}>Add</Button>
+      </div>
+    </div>
+  )
+}
+
+type SubAddMode = 'catalog' | 'measured' | 'lumpsum'
+
+/**
+ * Add ONE sub-activity to a placed activity. Mirrors the three-tab AddActivity pattern: copy a
+ * catalogue sub-activity missing from this placement (rates re-frozen server-side), or a one-off
+ * measured/lumpsum line (priced later). A plain warning states the read-time consequences.
+ */
+function AddSubActivity({
+  activity,
+  info,
+  busy,
+  onAdd,
+  onCancel,
+}: {
+  activity: ScopeActivityData
+  info: AddSubInfo | undefined
+  busy: boolean
+  onAdd: (body: Record<string, unknown>) => Promise<boolean>
+  onCancel: () => void
+}) {
+  const addable = info?.addableCatalogSubs ?? []
+  const [mode, setMode] = useState<SubAddMode>(addable.length > 0 ? 'catalog' : 'measured')
+  const [catalogSubId, setCatalogSubId] = useState('')
+  const [name, setName] = useState('')
+  const [lumpsum, setLumpsum] = useState('')
+
+  const valid =
+    mode === 'catalog' ? !!catalogSubId : mode === 'measured' ? !!name.trim() : !!name.trim() && Number(lumpsum) > 0
+
+  async function submit() {
+    if (!valid) return
+    let body: Record<string, unknown>
+    if (mode === 'catalog') body = { catalogSubActivityId: catalogSubId }
+    else if (mode === 'measured') body = { type: 'MEASURED', name: name.trim() }
+    else body = { type: 'LUMPSUM', name: name.trim(), lumpsumBhd: Number(lumpsum) }
+    if (await onAdd(body)) onCancel()
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-warning bg-warning-bg px-3 py-2 text-sm text-warning">
+        Adding scope increases this project&apos;s BAC and lowers <span className="font-medium">{activity.name}</span>&apos;s
+        physical % complete (the new line starts at 0%). Update the project&apos;s cost budget (budgetCost) afterwards to match.
+      </div>
+
+      <div className="flex flex-wrap gap-1">
+        {(['catalog', 'measured', 'lumpsum'] as SubAddMode[]).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => { setMode(m); setCatalogSubId(''); setName(''); setLumpsum('') }}
+            disabled={m === 'catalog' && addable.length === 0}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium disabled:opacity-40 ${mode === m ? 'bg-primary-50 text-primary-700' : 'text-fg-muted'}`}
+          >
+            {m === 'catalog' ? 'From catalogue' : m === 'measured' ? 'One-off measured' : 'One-off lumpsum'}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'catalog' ? (
+        addable.length === 0 ? (
+          <p className="text-sm text-fg-subtle">Every sub-activity on this activity&apos;s template is already placed here (or it is a one-off activity). Use a one-off line instead.</p>
+        ) : (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-fg">Catalogue sub-activity</label>
+            <select value={catalogSubId} onChange={(e) => setCatalogSubId(e.target.value)} className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg">
+              <option value="">Select…</option>
+              {addable.map((s) => (
+                <option key={s.id} value={s.id}>{s.name} ({s.type === 'LUMPSUM' ? 'lumpsum' : 'measured'})</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-fg-subtle">Its budget rates are re-frozen at today&apos;s global rates.</p>
+          </div>
+        )
+      ) : (
+        <>
+          <Input label="Sub-activity name" value={name} onChange={(e) => setName(e.target.value)} placeholder={mode === 'lumpsum' ? 'Snagging' : 'Second fix'} />
+          {mode === 'lumpsum' && (
+            <Input label="Lumpsum cost (BHD)" type="number" inputMode="decimal" min={0} step="any" value={lumpsum} onChange={(e) => setLumpsum(e.target.value)} hint="A cost to complete this line; adds to the cost budget only." />
+          )}
+          {mode === 'measured' && (
+            <p className="text-xs text-fg-subtle">Created with no budget rows — price it afterwards via the catalogue re-price paths.</p>
+          )}
+        </>
+      )}
+
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
+        <Button onClick={submit} loading={busy} disabled={!valid}>Add sub-activity</Button>
       </div>
     </div>
   )

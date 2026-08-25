@@ -1,7 +1,58 @@
-import type { Prisma, PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient, LineType } from '@prisma/client'
 import { implicitSubActivityCreate } from './implicitSub'
 
 type Tx = Prisma.TransactionClient | PrismaClient
+
+/**
+ * The Prisma include that pulls a catalog sub-activity's rates joined to each resource's CURRENT
+ * global cost rate (LaborCategory.hourlyRate / Material.unitRate). Shared so placement and the
+ * add-one-sub-activity route freeze rates identically — the single source of the freeze semantics.
+ */
+export const catalogSubRateInclude = {
+  manpowerRates: { select: { laborCategoryId: true, hoursPerUnit: true, category: { select: { hourlyRate: true } } } },
+  materialRates: { select: { materialId: true, qtyPerUnit: true, material: { select: { unitRate: true } } } },
+} satisfies Prisma.CatalogSubActivityInclude
+
+/** A catalog sub-activity loaded with {@link catalogSubRateInclude}. */
+export interface CatalogSubWithRates {
+  name: string
+  type: LineType
+  lumpsumBhd: Prisma.Decimal | null
+  sortOrder: number
+  isImplicit: boolean
+  manpowerRates: { laborCategoryId: string; hoursPerUnit: Prisma.Decimal; category: { hourlyRate: Prisma.Decimal | null } }[]
+  materialRates: { materialId: string; qtyPerUnit: Prisma.Decimal; material: { unitRate: Prisma.Decimal | null } }[]
+}
+
+/**
+ * Build the nested-create for ONE placed sub-activity from a catalog sub-activity: name, type,
+ * lumpsumBhd and every manpower/material rate, with costRateAtPlacement STAMPED from the current
+ * global rate. This is the freeze point — every quantity/rate is copied as a scalar; no FK points
+ * back to the catalog. Used by both {@link snapshotCatalogActivity} and the add-sub-activity route.
+ */
+export function copiedSubActivityCreate(s: CatalogSubWithRates) {
+  return {
+    name: s.name,
+    type: s.type,
+    lumpsumBhd: s.lumpsumBhd ? Number(s.lumpsumBhd) : null,
+    sortOrder: s.sortOrder,
+    isImplicit: s.isImplicit,
+    manpowerBudget: {
+      create: s.manpowerRates.map((r) => ({
+        laborCategoryId: r.laborCategoryId,
+        hoursPerUnit: Number(r.hoursPerUnit),
+        costRateAtPlacement: r.category.hourlyRate == null ? null : Number(r.category.hourlyRate),
+      })),
+    },
+    materialBudget: {
+      create: s.materialRates.map((r) => ({
+        materialId: r.materialId,
+        qtyPerUnit: Number(r.qtyPerUnit),
+        costRateAtPlacement: r.material.unitRate == null ? null : Number(r.material.unitRate),
+      })),
+    },
+  }
+}
 
 /**
  * Deep-copy a catalog activity onto an asset as project-owned rows, inside the caller's
@@ -32,12 +83,8 @@ export async function snapshotCatalogActivity(
     include: {
       subActivities: {
         orderBy: { sortOrder: 'asc' },
-        include: {
-          // Phase 6A: pull each resource's CURRENT global cost rate so it can be frozen
-          // onto the placed budget row (see costRateAtPlacement).
-          manpowerRates: { select: { laborCategoryId: true, hoursPerUnit: true, category: { select: { hourlyRate: true } } } },
-          materialRates: { select: { materialId: true, qtyPerUnit: true, material: { select: { unitRate: true } } } },
-        },
+        // Pull each resource's CURRENT global cost rate so it can be frozen at placement.
+        include: catalogSubRateInclude,
       },
     },
   })
@@ -48,27 +95,7 @@ export async function snapshotCatalogActivity(
     ? (opts.lumpsumOverrideBhd ?? (template.lumpsumBhd ? Number(template.lumpsumBhd) : null))
     : null
 
-  const copiedSubs = template.subActivities.map((s) => ({
-    name: s.name,
-    type: s.type,
-    lumpsumBhd: s.lumpsumBhd ? Number(s.lumpsumBhd) : null,
-    sortOrder: s.sortOrder,
-    isImplicit: s.isImplicit,
-    manpowerBudget: {
-      create: s.manpowerRates.map((r) => ({
-        laborCategoryId: r.laborCategoryId,
-        hoursPerUnit: Number(r.hoursPerUnit),
-        costRateAtPlacement: r.category.hourlyRate == null ? null : Number(r.category.hourlyRate),
-      })),
-    },
-    materialBudget: {
-      create: s.materialRates.map((r) => ({
-        materialId: r.materialId,
-        qtyPerUnit: Number(r.qtyPerUnit),
-        costRateAtPlacement: r.material.unitRate == null ? null : Number(r.material.unitRate),
-      })),
-    },
-  }))
+  const copiedSubs = template.subActivities.map(copiedSubActivityCreate)
 
   // Every reportable activity needs at least one sub-activity — add the implicit one when
   // the template has no named sub-activities (a bare measured line or a pure lumpsum).
