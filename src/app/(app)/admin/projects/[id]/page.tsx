@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { requireAdminPage } from '@/lib/auth/permissions'
-import { ScopeManager, type ScopeAssetData, type CatalogOption, type AddSubInfo } from '@/components/admin/ScopeManager'
+import { ScopeManager, type ScopeAssetData, type CatalogOption, type AddSubInfo, type ScopeSubRow } from '@/components/admin/ScopeManager'
 import { BudgetPanel } from '@/components/admin/BudgetPanel'
 import { VariancePanel } from '@/components/admin/VariancePanel'
 import { CostBudgetPanel } from '@/components/admin/CostBudgetPanel'
@@ -55,17 +55,23 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
     id: c.id, name: c.name, type: c.type, unit: c.unit, lumpsumBhd: c.lumpsumBhd == null ? null : Number(c.lumpsumBhd),
   }))
 
-  // Per-activity add-sub-activity info: which template subs are still addable (missing by name from
-  // the placed copy), and whether the activity is a flat implicit-only line (add is disabled then).
+  // Per-activity: the named (non-implicit) sub-activities for the expandable list, plus which
+  // template subs are still addable (missing by name), and whether the activity is a flat
+  // implicit-only line (add is disabled then).
   const rawActs = assets.flatMap((a) => a.activities)
   const catalogIds = [...new Set(rawActs.map((x) => x.catalogActivityId).filter((x): x is string => !!x))]
   const [placedSubs, templateSubs] = await Promise.all([
-    prisma.subActivity.findMany({ where: { activityId: { in: rawActs.map((x) => x.id) } }, select: { activityId: true, name: true, isActive: true, isImplicit: true } }),
+    prisma.subActivity.findMany({
+      where: { activityId: { in: rawActs.map((x) => x.id) } },
+      orderBy: { sortOrder: 'asc' },
+      select: { id: true, activityId: true, name: true, type: true, isActive: true, isImplicit: true, _count: { select: { progress: true } } },
+    }),
     catalogIds.length
       ? prisma.catalogSubActivity.findMany({ where: { catalogActivityId: { in: catalogIds }, isImplicit: false }, orderBy: { sortOrder: 'asc' }, select: { id: true, name: true, type: true, catalogActivityId: true } })
       : Promise.resolve([] as { id: string; name: string; type: 'MEASURED' | 'LUMPSUM'; catalogActivityId: string }[]),
   ])
   const addSubInfo: Record<string, AddSubInfo> = {}
+  const subActivitiesByActivity: Record<string, ScopeSubRow[]> = {}
   for (const act of rawActs) {
     const subs = placedSubs.filter((s) => s.activityId === act.id)
     const placedNames = new Set(subs.map((s) => s.name.trim().toLowerCase()))
@@ -77,6 +83,10 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
           .map((t) => ({ id: t.id, name: t.name, type: t.type }))
       : []
     addSubInfo[act.id] = { implicitOnly, addableCatalogSubs }
+    // The implicit sub has no UI presence anywhere — never list it.
+    subActivitiesByActivity[act.id] = subs
+      .filter((s) => !s.isImplicit)
+      .map((s) => ({ id: s.id, name: s.name, type: s.type, isActive: s.isActive, reportedCount: s._count.progress }))
   }
 
   return (
@@ -116,6 +126,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
         unitSuggestions={UNIT_SUGGESTIONS}
         catalogOptions={catalogOptions}
         addSubInfo={addSubInfo}
+        subActivitiesByActivity={subActivitiesByActivity}
       />
 
       {money && <CostBudgetPanel money={money} />}

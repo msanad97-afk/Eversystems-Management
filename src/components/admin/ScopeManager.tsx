@@ -47,6 +47,14 @@ export interface AddSubInfo {
   implicitOnly: boolean
   addableCatalogSubs: { id: string; name: string; type: 'MEASURED' | 'LUMPSUM' }[]
 }
+/** A named (never implicit) sub-activity on a placed activity, for the expandable list. */
+export interface ScopeSubRow {
+  id: string
+  name: string
+  type: 'MEASURED' | 'LUMPSUM'
+  isActive: boolean
+  reportedCount: number
+}
 
 function bhd(n: number): string {
   return `BHD ${n.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`
@@ -58,12 +66,14 @@ export function ScopeManager({
   unitSuggestions,
   catalogOptions,
   addSubInfo,
+  subActivitiesByActivity,
 }: {
   projectId: string
   assets: ScopeAssetData[]
   unitSuggestions: string[]
   catalogOptions: CatalogOption[]
   addSubInfo: Record<string, AddSubInfo>
+  subActivitiesByActivity: Record<string, ScopeSubRow[]>
 }) {
   const router = useRouter()
   const { showToast } = useToast()
@@ -74,6 +84,57 @@ export function ScopeManager({
   const [editAsset, setEditAsset] = useState<ScopeAssetData | null>(null)
   const [editActivity, setEditActivity] = useState<ScopeActivityData | null>(null)
   const [addSubActivity, setAddSubActivity] = useState<ScopeActivityData | null>(null)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  function toggleExpanded(activityId: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(activityId)) next.delete(activityId)
+      else next.add(activityId)
+      return next
+    })
+  }
+
+  /** Deactivate / reactivate one named sub-activity. Deactivation is warned first. */
+  async function toggleSub(act: ScopeActivityData, sub: ScopeSubRow) {
+    if (sub.isActive) {
+      const ok = confirm(
+        `Deactivate "${sub.name}"?\n\n` +
+          `This removes its budget from BAC, removes any earned value it carries, and stops it ` +
+          `appearing on new daily reports.\n\n` +
+          `Existing approved reports and certified valuations are unchanged. You can reactivate it later.`,
+      )
+      if (!ok) return
+    }
+    if (await call('PATCH', `/api/activities/${act.id}/subactivities/${sub.id}`, { isActive: !sub.isActive })) {
+      showToast(sub.isActive ? `"${sub.name}" deactivated.` : `"${sub.name}" reactivated.`, 'success')
+    }
+  }
+
+  /** Delete a named sub-activity — the server deactivates instead when it has been reported against. */
+  async function deleteSub(act: ScopeActivityData, sub: ScopeSubRow) {
+    const ok = confirm(
+      `Delete "${sub.name}"?\n\n` +
+        `If it has never been reported against, it is permanently deleted along with its frozen ` +
+        `budget rows. This cannot be undone.\n\n` +
+        `If it HAS been reported against, it is deactivated instead — no approved report loses the ` +
+        `line it was written against.`,
+    )
+    if (!ok) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/activities/${act.id}/subactivities/${sub.id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? 'Could not delete.')
+      router.refresh()
+      if (data.deleted) showToast(`"${sub.name}" deleted.`, 'success')
+      else showToast(`"${sub.name}" has been reported against, so it was deactivated instead of deleted.`, 'info')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not delete.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
   const [importResult, setImportResult] = useState<{ ok?: string; errors?: { row: number; message: string }[] } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -271,38 +332,82 @@ export function ScopeManager({
                   <p className="py-2 text-sm text-fg-subtle">No activities yet.</p>
                 ) : (
                   <div className="divide-y divide-border">
-                    {asset.activities.map((act, xi) => (
-                      <div key={act.id} className="flex items-center gap-2 py-2">
-                        <ReorderButtons onUp={() => move('activities', asset.activities, xi, -1)} onDown={() => move('activities', asset.activities, xi, 1)} first={xi === 0} last={xi === asset.activities.length - 1} />
-                        <div className="min-w-0 flex-1">
-                          <span className="text-sm text-fg">{act.ref ? `${act.ref} · ` : ''}{act.name}</span>
-                          {act.type === 'LUMPSUM' ? (
-                            <span className="ml-2 text-xs text-fg-subtle">{act.lumpsumBhd != null ? bhd(act.lumpsumBhd) : 'lumpsum'}</span>
-                          ) : (
-                            <span className="ml-2 text-xs text-fg-subtle">BOQ {act.boqQuantity} {act.unit ?? ''}</span>
-                          )}
-                          {act.type === 'LUMPSUM' && <Badge tone="warning" className="ml-2">lumpsum</Badge>}
-                          {act.fromCatalog && <Badge tone="info" className="ml-2">catalog</Badge>}
-                          {act.subActivityCount > 0 && <Badge tone="neutral" className="ml-2">{act.subActivityCount} sub</Badge>}
-                          {!act.isActive && <Badge tone="neutral" className="ml-2">inactive</Badge>}
+                    {asset.activities.map((act, xi) => {
+                      const namedSubs = subActivitiesByActivity[act.id] ?? []
+                      const activeNamed = namedSubs.filter((s) => s.isActive).length
+                      const isOpen = expanded.has(act.id)
+                      return (
+                      <div key={act.id} className="py-2">
+                        <div className="flex items-center gap-2">
+                          <ReorderButtons onUp={() => move('activities', asset.activities, xi, -1)} onDown={() => move('activities', asset.activities, xi, 1)} first={xi === 0} last={xi === asset.activities.length - 1} />
+                          <div className="min-w-0 flex-1">
+                            <span className="text-sm text-fg">{act.ref ? `${act.ref} · ` : ''}{act.name}</span>
+                            {act.type === 'LUMPSUM' ? (
+                              <span className="ml-2 text-xs text-fg-subtle">{act.lumpsumBhd != null ? bhd(act.lumpsumBhd) : 'lumpsum'}</span>
+                            ) : (
+                              <span className="ml-2 text-xs text-fg-subtle">BOQ {act.boqQuantity} {act.unit ?? ''}</span>
+                            )}
+                            {act.type === 'LUMPSUM' && <Badge tone="warning" className="ml-2">lumpsum</Badge>}
+                            {act.fromCatalog && <Badge tone="info" className="ml-2">catalog</Badge>}
+                            {namedSubs.length > 0 && (
+                              <button type="button" onClick={() => toggleExpanded(act.id)} className="ml-2 align-middle" aria-expanded={isOpen} aria-label={isOpen ? 'Hide sub-activities' : 'Show sub-activities'}>
+                                <Badge tone="neutral">{isOpen ? '▾ ' : '▸ '}{activeNamed} sub{activeNamed === 1 ? '' : 's'}</Badge>
+                              </button>
+                            )}
+                            {!act.isActive && <Badge tone="neutral" className="ml-2">inactive</Badge>}
+                          </div>
+                          <Button size="sm" variant="ghost" onClick={() => setEditActivity(act)}>Edit</Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setAddSubActivity(act)}
+                            disabled={!act.isActive || addSubInfo[act.id]?.implicitOnly}
+                            title={addSubInfo[act.id]?.implicitOnly ? 'This flat activity has no named sub-activities; structuring it is not supported yet.' : undefined}
+                          >
+                            Add sub
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => reprice(act)}>Re-price</Button>
+                          <Button size="sm" variant="ghost" onClick={() => call('PATCH', `/api/activities/${act.id}`, { isActive: !act.isActive })}>
+                            {act.isActive ? 'Deactivate' : 'Activate'}
+                          </Button>
+                          <Button size="sm" variant="ghost" className="text-danger" onClick={() => removeActivity(act)}>Delete</Button>
                         </div>
-                        <Button size="sm" variant="ghost" onClick={() => setEditActivity(act)}>Edit</Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setAddSubActivity(act)}
-                          disabled={!act.isActive || addSubInfo[act.id]?.implicitOnly}
-                          title={addSubInfo[act.id]?.implicitOnly ? 'This flat activity has no named sub-activities; structuring it is not supported yet.' : undefined}
-                        >
-                          Add sub
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => reprice(act)}>Re-price</Button>
-                        <Button size="sm" variant="ghost" onClick={() => call('PATCH', `/api/activities/${act.id}`, { isActive: !act.isActive })}>
-                          {act.isActive ? 'Deactivate' : 'Activate'}
-                        </Button>
-                        <Button size="sm" variant="ghost" className="text-danger" onClick={() => removeActivity(act)}>Delete</Button>
+
+                        {isOpen && namedSubs.length > 0 && (
+                          <ul className="ml-8 mt-1 space-y-1 border-l border-border pl-3">
+                            {namedSubs.map((sub) => {
+                              const lastActive = sub.isActive && activeNamed <= 1 // an activity must keep one active sub
+                              return (
+                                <li key={sub.id} className="flex items-center gap-2 text-sm">
+                                  <span className={sub.isActive ? 'text-fg' : 'text-fg-subtle line-through'}>{sub.name}</span>
+                                  {sub.type === 'LUMPSUM' && <Badge tone="warning">lumpsum</Badge>}
+                                  {!sub.isActive && <Badge tone="neutral">inactive</Badge>}
+                                  {sub.reportedCount > 0 && <span className="text-xs text-fg-subtle">{sub.reportedCount} reported</span>}
+                                  <span className="flex-1" />
+                                  <Button
+                                    size="sm" variant="ghost"
+                                    onClick={() => toggleSub(act, sub)}
+                                    disabled={lastActive}
+                                    title={lastActive ? 'An activity must keep at least one active sub-activity.' : undefined}
+                                  >
+                                    {sub.isActive ? 'Deactivate' : 'Activate'}
+                                  </Button>
+                                  <Button
+                                    size="sm" variant="ghost" className="text-danger"
+                                    onClick={() => deleteSub(act, sub)}
+                                    disabled={lastActive}
+                                    title={lastActive ? 'An activity must keep at least one active sub-activity.' : undefined}
+                                  >
+                                    Delete
+                                  </Button>
+                                </li>
+                              )
+                            })}
+                          </ul>
+                        )}
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
                 <AddActivity
