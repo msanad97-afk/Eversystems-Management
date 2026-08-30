@@ -111,6 +111,7 @@ enum AuditAction {
   SUBACTIVITY_ADDED
   SUBACTIVITY_UPDATED
   SUBACTIVITY_DELETED
+  EMAIL_SENT
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -145,6 +146,9 @@ model User {
   deliveries         Delivery[]       @relation("DeliveryCreatedBy")
   acknowledgedAlerts InventoryAlert[] @relation("AlertAcknowledgedBy")
   stockCounts        StockCount[]     @relation("StockCountCountedBy")
+
+  emailSends      EmailSend[]      @relation("EmailSendSender")
+  emailRecipients EmailRecipient[] @relation("EmailRecipientUser")
 }
 
 // ─── PROJECTS (SITES) ──────────────────────────────────────────────────────────
@@ -191,6 +195,7 @@ model Project {
   inventoryAlerts  InventoryAlert[]
   consumptionEntries ConsumptionEntry[]
   stockCounts        StockCount[]
+  emailSends         EmailSend[]
 }
 
 model ProjectMember {
@@ -997,4 +1002,52 @@ model StockCountLine {
 
   @@index([stockCountId])
   @@index([materialId])
+}
+
+// ─── EMAIL SENDS (Phase A) ────────────────────────────────────────────────────
+// A record of every document emailed out of the app. Written PENDING before the
+// transport is touched and settled to SENT/FAILED after, so a send that dies mid-flight
+// still leaves a row. Recipients and entityCode are FROZEN at send time: this is the
+// answer to "what went to whom", and it must not change when a user is renamed or an
+// address is later edited.
+
+enum EmailSendStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model EmailSend {
+  id             String          @id @default(cuid())
+  subject        String
+  bodyText       String?
+  entityType     String // 'DAILY_REPORT' | 'MATERIAL_REQUEST'
+  entityId       String
+  entityCode     String // frozen label — survives a later rename
+  projectId      String?
+  attachmentName String?
+  status         EmailSendStatus @default(PENDING)
+  errorMessage   String?
+  sentById       String
+  createdAt      DateTime        @default(now())
+  sentAt         DateTime?
+
+  sentBy     User             @relation("EmailSendSender", fields: [sentById], references: [id])
+  project    Project?         @relation(fields: [projectId], references: [id])
+  recipients EmailRecipient[]
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model EmailRecipient {
+  id          String  @id @default(cuid())
+  emailSendId String
+  address     String // frozen at send time
+  userId      String? // set when the recipient was an app user
+
+  emailSend EmailSend @relation(fields: [emailSendId], references: [id], onDelete: Cascade)
+  user      User?     @relation("EmailRecipientUser", fields: [userId], references: [id])
+
+  @@index([emailSendId])
 }

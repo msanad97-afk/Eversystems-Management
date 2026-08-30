@@ -8,8 +8,19 @@ export function normalizeEmail(v: string): string {
   return v.trim().toLowerCase()
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+/**
+ * Validity check for a value already known to be a string. Deliberately NOT a type predicate:
+ * narrowing an existing `string` to `never` on the failure branch would make the offending
+ * address unusable in the error message we owe the caller.
+ */
+export function isValidEmail(v: string): boolean {
+  return EMAIL_RE.test(v.trim())
+}
+
 export function isEmail(v: unknown): v is string {
-  return typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim())
+  return typeof v === 'string' && isValidEmail(v)
 }
 
 export function isRole(v: unknown): v is Role {

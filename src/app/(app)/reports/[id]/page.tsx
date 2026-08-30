@@ -11,6 +11,9 @@ import { loadMaterialBalances } from '@/lib/inventory/balance.server'
 import { ReportForm } from '@/components/reports/ReportForm'
 import { ReportReadOnlyView } from '@/components/reports/ReportReadOnlyView'
 import { ReviewActions } from '@/components/reports/ReviewActions'
+import { SendEmailDialog } from '@/components/email/SendEmailDialog'
+import { EmailHistory } from '@/components/email/EmailHistory'
+import { loadEmailSends, loadRecipientCandidates } from '@/lib/email/history.server'
 import type { CategoryOption, MaterialOption } from '@/components/reports/formTypes'
 
 export const dynamic = 'force-dynamic'
@@ -106,12 +109,31 @@ export default async function ReportPage({ params }: { params: { id: string } })
   const [earned, deliveries, stockCount] = await Promise.all([earnedBySubActivity(measuredSubIds), loadReportDeliveries(report.id), loadReportStockCount(report.id)])
   const canReview = user.role === 'ADMIN' && report.status === 'SUBMITTED'
 
+  // Emailing a report out is an ADMIN action on an APPROVED report only — a supervisor never
+  // chooses who a company document goes to. History is admin-only for the same reason.
+  const isAdmin = user.role === 'ADMIN'
+  const canEmail = isAdmin && report.status === 'APPROVED'
+  const [emailSends, recipientCandidates] = await Promise.all([
+    isAdmin ? loadEmailSends('DAILY_REPORT', report.id) : Promise.resolve([]),
+    canEmail ? loadRecipientCandidates() : Promise.resolve([]),
+  ])
+
   return (
     <div className="space-y-4">
       {canReview && <ReviewActions reportId={report.id} />}
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-4">
         <a href={`/api/reports/${report.id}/pdf`} target="_blank" rel="noreferrer" className="text-sm font-medium text-primary-700 hover:underline">Download PDF</a>
+        {canEmail && (
+          <SendEmailDialog
+            entityType="DAILY_REPORT"
+            entityId={report.id}
+            entityCode={report.reportCode}
+            attachmentName={`${report.reportCode}.pdf`}
+            users={recipientCandidates}
+          />
+        )}
       </div>
+      {isAdmin && <EmailHistory sends={emailSends} />}
       <ReportReadOnlyView
         canRecall={isAuthor && report.status === 'SUBMITTED'}
         deliveries={deliveries}

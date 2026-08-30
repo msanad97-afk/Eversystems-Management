@@ -1,47 +1,7 @@
-import nodemailer from 'nodemailer'
+import { sendMail } from '@/lib/email/transport'
 
-/**
- * Brevo SMTP mailer. If SMTP_USER is not configured (local dev), messages are
- * logged to the console instead of sent — so the reset-link flow is testable
- * without live credentials.
- */
-
-interface SendMailInput {
-  to: string
-  subject: string
-  html: string
-  text?: string
-}
-
-function getTransport() {
-  const host = process.env.SMTP_HOST
-  const port = Number(process.env.SMTP_PORT ?? 587)
-  const user = process.env.SMTP_USER
-  const pass = process.env.SMTP_PASSWORD
-
-  if (!user || !pass || !host) return null
-
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-  })
-}
-
-export async function sendMail({ to, subject, html, text }: SendMailInput): Promise<void> {
-  const from = process.env.SMTP_FROM ?? 'Eversystems Management <no-reply@eversystems.local>'
-  const transport = getTransport()
-
-  if (!transport) {
-    console.info(
-      `\n[email:dev] SMTP not configured — message not sent.\n  to: ${to}\n  subject: ${subject}\n  ${text ?? html}\n`,
-    )
-    return
-  }
-
-  await transport.sendMail({ from, to, subject, html, text })
-}
+export { sendMail } from '@/lib/email/transport'
+export type { MailAttachment, SendMailInput } from '@/lib/email/transport'
 
 function appUrl(path: string): string {
   const base = process.env.NEXTAUTH_URL ?? 'http://localhost:3000'

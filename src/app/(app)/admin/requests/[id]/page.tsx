@@ -7,6 +7,9 @@ import { loadMaterialCostRates, lineCost } from '@/lib/materialRequests/cost.ser
 import { fmtQty, scopeChain } from '@/components/materialRequests/types'
 import { MaterialRequestStatusBadge } from '@/components/materialRequests/MaterialRequestStatusBadge'
 import { ReviewRequestClient, type ReviewLineData } from '@/components/materialRequests/ReviewRequestClient'
+import { SendEmailDialog } from '@/components/email/SendEmailDialog'
+import { EmailHistory } from '@/components/email/EmailHistory'
+import { loadEmailSends, loadRecipientCandidates } from '@/lib/email/history.server'
 
 export const dynamic = 'force-dynamic'
 
@@ -78,17 +81,31 @@ export default async function AdminReviewRequestPage({ params }: { params: { id:
   // Reviewed → immutable read-only summary (with cost, ADMIN).
   let totalCost = 0
   const printable = request.status === 'APPROVED' || request.status === 'PARTIALLY_APPROVED'
+  // Emailing the letter out is an ADMIN action (this whole page is admin-only) and needs an
+  // approved quantity to send — a fully rejected request has no letter.
+  const [emailSends, recipientCandidates] = await Promise.all([
+    loadEmailSends('MATERIAL_REQUEST', request.id),
+    printable ? loadRecipientCandidates() : Promise.resolve([]),
+  ])
   return (
     <div className="space-y-5">
       {header}
       {/* Same quantities-only procurement letter the supervisor prints. */}
       {printable && (
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-4">
           <a href={`/api/material-requests/${request.id}/pdf`} target="_blank" rel="noreferrer" className="text-sm font-medium text-primary-700 hover:underline">
             Download PDF
           </a>
+          <SendEmailDialog
+            entityType="MATERIAL_REQUEST"
+            entityId={request.id}
+            entityCode={request.requestCode}
+            attachmentName={`${request.requestCode}.pdf`}
+            users={recipientCandidates}
+          />
         </div>
       )}
+      <EmailHistory sends={emailSends} />
       {request.reviewNote && (
         <div className="rounded-md border border-border bg-surface-muted px-3 py-2 text-sm text-fg-muted">
           <span className="font-semibold text-fg">Review note:</span> {request.reviewNote}
