@@ -90,10 +90,10 @@ describe('lumpsum bounds (no regression)', () => {
 })
 
 describe('validateForSubmit (sub-activity-structured)', () => {
-  it('requires at least one activity with progress OR a delivery', () => {
-    expect(validateForSubmit([measured({ quantityDone: 0 })])).toMatch(/activity with progress, or a delivery/)
-    expect(validateForSubmit([lumpsum({ percentComplete: 0 })])).toMatch(/activity with progress, or a delivery/)
-    expect(validateForSubmit([])).toMatch(/activity with progress, or a delivery/)
+  it('requires progress, a delivery, OR general notes — and names all three remedies', () => {
+    expect(validateForSubmit([measured({ quantityDone: 0 })])).toMatch(/no work and no deliveries/)
+    expect(validateForSubmit([lumpsum({ percentComplete: 0 })])).toMatch(/write in general notes/)
+    expect(validateForSubmit([])).toMatch(/site closed, rain, awaiting access/)
   })
   it('a delivery-only day (no activity progress) is valid when hasDeliveries is true', () => {
     expect(validateForSubmit([], true)).toBeNull() // deliveries, no activities
@@ -102,8 +102,13 @@ describe('validateForSubmit (sub-activity-structured)', () => {
   it('activities with progress and no deliveries still submit', () => {
     expect(validateForSubmit([measured({ quantityDone: 10 })], false)).toBeNull()
   })
-  it('neither activity progress nor a delivery is rejected', () => {
-    expect(validateForSubmit([], false)).toMatch(/activity with progress, or a delivery/)
+  it('an otherwise-empty report submits when general notes are non-empty (Phase B-1)', () => {
+    expect(validateForSubmit([], false, true)).toBeNull() // no progress, no delivery, but a written reason
+    expect(validateForSubmit([measured({ quantityDone: 0 })], false, true)).toBeNull()
+  })
+  it('an empty report with no notes (or blank notes) is rejected', () => {
+    expect(validateForSubmit([], false, false)).toMatch(/no work and no deliveries/)
+    expect(validateForSubmit([measured({ quantityDone: 0 })], false, false)).toMatch(/no work and no deliveries/)
   })
   it('accepts a lumpsum line with % > 0 as progress', () => {
     expect(validateForSubmit([lumpsum({ percentComplete: 25 })])).toBeNull()

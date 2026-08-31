@@ -133,17 +133,18 @@ export function hasProgress(s: Pick<SubActivityInput, 'type' | 'quantityDone' | 
 
 /**
  * Applied when SUBMITTING:
- *   - ≥1 line with progress (a quantity, or a % complete);
+ *   - the report is non-empty: ≥1 line with progress, OR ≥1 delivery, OR non-empty general notes
+ *     (a paused site still files a report every working day — an otherwise-empty one must say WHY);
  *   - every manpower row: headcount ≥ 1 and hours > 0;
  *   - every material row: quantity > 0;
  *   - every line within its cap / lumpsum bounds.
  * Manpower and materials remain optional per line.
  */
-export function validateForSubmit(subs: SubActivityInput[], hasDeliveries = false): string | null {
-  // A report is valid with at least one activity line with progress OR at least one delivery
-  // (a delivery-only day — material arriving during mobilisation — is a normal occurrence).
-  if (!hasDeliveries && !subs.some(hasProgress)) {
-    return 'Add at least one activity with progress, or a delivery, before submitting.'
+export function validateForSubmit(subs: SubActivityInput[], hasDeliveries = false, hasNotes = false): string | null {
+  // Non-empty in one of three ways: activity progress, a delivery (material arriving during
+  // mobilisation is normal), OR a written reason in general notes (a genuine no-work day).
+  if (!hasDeliveries && !hasNotes && !subs.some(hasProgress)) {
+    return 'This report has no work and no deliveries. Add an activity with progress, log a delivery, or write in general notes why there was no work (site closed, rain, awaiting access).'
   }
   for (const s of subs) {
     for (const m of s.manpower) {

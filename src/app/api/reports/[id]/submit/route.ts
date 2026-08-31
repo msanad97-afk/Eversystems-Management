@@ -19,7 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const report = await prisma.dailyReport.findUnique({
     where: { id: params.id },
     select: {
-      id: true, authorId: true, projectId: true, status: true, reportCode: true,
+      id: true, authorId: true, projectId: true, status: true, reportCode: true, generalNotes: true,
       activities: {
         select: {
           subActivities: {
@@ -63,9 +63,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     materials: r.materials.map((m) => ({ materialId: m.materialId, quantity: Number(m.quantity) })),
   }))
 
-  // A delivery-only day is valid: allow submit when there is progress OR at least one delivery.
+  // A report is valid with progress, OR a delivery, OR a written reason in general notes (a paused
+  // site files a no-work report saying why). Enforced here as well as in the UI.
   const deliveryCount = await prisma.delivery.count({ where: { dailyReportId: report.id } })
-  const error = validateForSubmit(subs, deliveryCount > 0)
+  const hasNotes = (report.generalNotes ?? '').trim().length > 0
+  const error = validateForSubmit(subs, deliveryCount > 0, hasNotes)
   if (error) return NextResponse.json({ error }, { status: 400 })
 
   // Submit atomically: status + MISSING_ATTACHMENT alerts + derived consumption ledger + stock-count

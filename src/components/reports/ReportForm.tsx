@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Select'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/contexts/ToastContext'
-import { WEATHER_OPTIONS, validateForSubmit, computeManpowerTotals, type SubActivityInput } from '@/lib/reports/rules'
+import { WEATHER_OPTIONS, validateForSubmit, hasProgress, computeManpowerTotals, type SubActivityInput } from '@/lib/reports/rules'
 import { ActivityCard, emptySubHelper } from '@/components/reports/ActivityCard'
 import { DeliveriesSection, type SupplierOption } from '@/components/deliveries/DeliveriesSection'
 import { StockCountSection, type StockBalanceHint } from '@/components/inventory/StockCountSection'
@@ -180,7 +180,7 @@ export function ReportForm({
   }
 
   async function onSubmit() {
-    const error = validateForSubmit(buildSubInputs(), deliveryCount > 0)
+    const error = validateForSubmit(buildSubInputs(), deliveryCount > 0, generalNotes.trim().length > 0)
     if (error) { showToast(error, 'error'); setConfirmOpen(false); return }
     if (!(await save({ silent: true }))) { setConfirmOpen(false); return }
     setSaving(true)
@@ -217,6 +217,10 @@ export function ReportForm({
   function updateRow(key: string, next: ActivityRow) { setRows((prev) => prev.map((r) => (r.key === key ? next : r))); markDirty() }
   function removeRow(key: string) { setRows((prev) => prev.filter((r) => r.key !== key)); markDirty() }
   function addActivity() { setRows((prev) => [...prev, { key: newKey(), activityId: '', subs: [] }]); markDirty() }
+
+  // A report with no activity progress and no deliveries needs a written reason in general notes.
+  const notesRequired = deliveryCount === 0 && !buildSubInputs().some(hasProgress)
+  const notesEmpty = generalNotes.trim().length === 0
 
   return (
     <div className="space-y-4 pb-28">
@@ -269,10 +273,17 @@ export function ReportForm({
 
       <StockCountSection reportId={report.id} initialStockCount={stockCount} materials={materials} balances={balances} />
 
-      <div className="rounded-lg border border-border bg-surface p-4">
-        <label className="mb-1 block text-sm font-medium text-fg">General notes</label>
-        <textarea value={generalNotes} onChange={(e) => { setGeneralNotes(e.target.value); markDirty() }} placeholder="Delays, safety notes, visitors…" rows={3}
-          className="w-full resize-y rounded-md border border-border-strong bg-surface px-3 py-2 text-fg placeholder:text-fg-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-primary" />
+      <div className={`rounded-lg border bg-surface p-4 ${notesRequired && notesEmpty ? 'border-danger' : 'border-border'}`}>
+        <label className="mb-1 block text-sm font-medium text-fg">
+          General notes{notesRequired ? ' *' : ''}
+        </label>
+        {notesRequired && (
+          <p className="mb-2 text-xs text-danger">
+            No work recorded today. Say why (site closed, rain, awaiting access) — a report can’t be submitted empty.
+          </p>
+        )}
+        <textarea value={generalNotes} onChange={(e) => { setGeneralNotes(e.target.value); markDirty() }} placeholder={notesRequired ? 'e.g. Site closed — public holiday' : 'Delays, safety notes, visitors…'} rows={3}
+          className={`w-full resize-y rounded-md border bg-surface px-3 py-2 text-fg placeholder:text-fg-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${notesRequired && notesEmpty ? 'border-danger' : 'border-border-strong'}`} />
       </div>
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface px-4 py-3 pb-safe">

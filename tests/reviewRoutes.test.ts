@@ -166,6 +166,34 @@ describe('submit route — resubmit clears the prior review', () => {
   })
 })
 
+describe('submit route — an empty report needs a written reason (Phase B-1)', () => {
+  beforeEach(() => {
+    vi.mocked(prisma.subActivity.findMany).mockResolvedValue([] as never)
+    vi.mocked(prisma.reportSubActivity.groupBy).mockResolvedValue([] as never)
+    vi.mocked(prisma.delivery.count).mockResolvedValue(0) // no deliveries
+  })
+
+  it('an otherwise-empty report submits when general notes explain why', async () => {
+    actAs('SUPERVISOR')
+    reportIs({ status: 'DRAFT', authorId: USER_ID, activities: [], generalNotes: 'Site closed — public holiday' })
+    expect((await submit(req(), params)).status).toBe(200)
+  })
+
+  it('an empty report with whitespace-only notes is rejected server-side (400)', async () => {
+    actAs('SUPERVISOR')
+    reportIs({ status: 'DRAFT', authorId: USER_ID, activities: [], generalNotes: '   ' })
+    const res = await submit(req(), params)
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toMatch(/no work and no deliveries/)
+  })
+
+  it('an empty report with no notes is rejected (400)', async () => {
+    actAs('SUPERVISOR')
+    reportIs({ status: 'DRAFT', authorId: USER_ID, activities: [], generalNotes: null })
+    expect((await submit(req(), params)).status).toBe(400)
+  })
+})
+
 describe('mutations blocked after approval / for viewers', () => {
   it('editing an APPROVED report is blocked (403) — approve locks permanently', async () => {
     actAs('SUPERVISOR')
