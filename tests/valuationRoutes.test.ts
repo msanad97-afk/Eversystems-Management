@@ -6,6 +6,8 @@ import type { Role, ValuationStatus } from '@prisma/client'
 // write path — not payload arithmetic, which tests/valuation.test.ts covers exhaustively.
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }))
 vi.mock('@/lib/audit', () => ({ writeAuditLog: vi.fn(), recordAuditLog: vi.fn() }))
+// Phase B-2 certify notification is covered by tests/certifyNotify.test.ts; no-op here.
+vi.mock('@/lib/notify/events.server', () => ({ notifyReportRejected: vi.fn(), notifyMaterialRequestReviewed: vi.fn(), notifyValuationCertified: vi.fn() }))
 vi.mock('@/lib/idgen', () => ({ nextCode: vi.fn().mockResolvedValue('VAL-2026-0001') }))
 vi.mock('@/lib/valuation.server', () => ({
   computeValuation: vi.fn(),

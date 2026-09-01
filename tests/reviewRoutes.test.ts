@@ -5,6 +5,8 @@ import type { ReportStatus, Role } from '@prisma/client'
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }))
 vi.mock('@/lib/audit', () => ({ writeAuditLog: vi.fn(), recordAuditLog: vi.fn() }))
 vi.mock('@/lib/notifications', () => ({ notifyReportSubmitted: vi.fn(), notifyReportReviewed: vi.fn() }))
+// Phase B-2 notifiers are covered by their own tests; no-op here so the reject route stays isolated.
+vi.mock('@/lib/notify/events.server', () => ({ notifyReportRejected: vi.fn(), notifyMaterialRequestReviewed: vi.fn(), notifyValuationCertified: vi.fn() }))
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     user: { findUnique: vi.fn() },

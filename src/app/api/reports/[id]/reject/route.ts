@@ -5,7 +5,7 @@ import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
 import { canReview } from '@/lib/reports/rules'
 import { isNonEmptyString } from '@/lib/validation'
-import { notifyReportReviewed } from '@/lib/notifications'
+import { notifyReportRejected } from '@/lib/notify/events.server'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdmin()
@@ -51,8 +51,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     ipAddress: getClientIp(req),
   })
 
-  // Notify the author with the rejection note (fire-and-forget).
-  void notifyReportReviewed(report.id, 'REJECTED', note)
+  // Notify the author with the rejection note, via the recorded-send path. Awaited but never
+  // throws — the rejection stands whether or not the email lands.
+  await notifyReportRejected(report.id, note, guard.user.id)
 
   return NextResponse.json({ ok: true })
 }

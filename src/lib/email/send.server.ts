@@ -17,7 +17,11 @@ import { sendMail, type MailAttachment } from '@/lib/email/transport'
  * URL, no storage link ever goes into a message that can be forwarded outside the company.
  */
 
-export type EmailEntityType = 'DAILY_REPORT' | 'MATERIAL_REQUEST'
+// The frozen label stored on EmailSend.entityType. DAILY_REPORT / MATERIAL_REQUEST are also
+// manually sendable documents (see documents.server.ts). VALUATION and REPORT_MISSING are Phase B-2
+// event notifications that carry no downloadable document, so they never go through the manual
+// resolver — they only ever appear here as a recorded-send label.
+export type EmailEntityType = 'DAILY_REPORT' | 'MATERIAL_REQUEST' | 'VALUATION' | 'REPORT_MISSING'
 
 export interface RecordedRecipient {
   address: string

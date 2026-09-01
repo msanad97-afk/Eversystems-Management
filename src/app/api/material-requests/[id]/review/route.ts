@@ -5,6 +5,7 @@ import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
 import { isNonEmptyString } from '@/lib/validation'
 import { canReviewRequest, resolveReviewStatus, validateApprovedQty, type ReviewLine } from '@/lib/materialRequests/rules'
+import { notifyMaterialRequestReviewed } from '@/lib/notify/events.server'
 
 /** ADMIN review: per-line approve/modify/reject. Body: { decisions: [{lineId, approvedQty}], note? } */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -65,6 +66,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     metadata: { status, note },
     ipAddress: getClientIp(req),
   })
+
+  // Notify the requester (recorded send). The letter is attached only when quantities were
+  // approved; a fully-rejected request still notifies, without an attachment. Never throws.
+  await notifyMaterialRequestReviewed(request.id, status, note, guard.user.id)
 
   return NextResponse.json({ ok: true, status })
 }

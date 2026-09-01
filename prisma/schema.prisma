@@ -112,6 +112,9 @@ enum AuditAction {
   SUBACTIVITY_UPDATED
   SUBACTIVITY_DELETED
   EMAIL_SENT
+  NOTIFICATION_RECIPIENT_ADDED
+  NOTIFICATION_RECIPIENT_REMOVED
+  NOTIFICATION_SENT
 }
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -149,6 +152,8 @@ model User {
 
   emailSends      EmailSend[]      @relation("EmailSendSender")
   emailRecipients EmailRecipient[] @relation("EmailRecipientUser")
+
+  notificationRecipients NotificationRecipient[] @relation("NotificationRecipientUser")
 }
 
 // ─── PROJECTS (SITES) ──────────────────────────────────────────────────────────
@@ -183,16 +188,16 @@ model Project {
   defectsLiabilityMonths   Int?      @default(12) // tranche 2 due = PC date + this
   retentionFirstReleasePct Decimal?  @default(50) @db.Decimal(5, 2) // % released at PC
 
-  members          ProjectMember[]
-  reports          DailyReport[]
-  counters         ReportCounter[]
-  assets           Asset[]
-  baseline         BaselinePeriod[]
-  valuations       Valuation[]
-  expenses         Expense[]
-  cashTransactions CashTransaction[] // Phase 6E: cash movements allocated to this project
-  materialRequests MaterialRequest[]
-  inventoryAlerts  InventoryAlert[]
+  members            ProjectMember[]
+  reports            DailyReport[]
+  counters           ReportCounter[]
+  assets             Asset[]
+  baseline           BaselinePeriod[]
+  valuations         Valuation[]
+  expenses           Expense[]
+  cashTransactions   CashTransaction[] // Phase 6E: cash movements allocated to this project
+  materialRequests   MaterialRequest[]
+  inventoryAlerts    InventoryAlert[]
   consumptionEntries ConsumptionEntry[]
   stockCounts        StockCount[]
   emailSends         EmailSend[]
@@ -355,8 +360,8 @@ model DailyReport {
   author     User    @relation("ReportAuthor", fields: [authorId], references: [id])
   reviewedBy User?   @relation("ReportReviewer", fields: [reviewedById], references: [id])
 
-  activities        ReportActivity[]
-  deliveries        Delivery[]
+  activities         ReportActivity[]
+  deliveries         Delivery[]
   consumptionEntries ConsumptionEntry[]
   stockCounts        StockCount[]
 
@@ -545,10 +550,10 @@ model ManpowerEntry {
 }
 
 model MaterialEntry {
-  id                  String  @id @default(cuid())
+  id                  String   @id @default(cuid())
   reportSubActivityId String
   materialId          String
-  quantity            Decimal @db.Decimal(12, 3)
+  quantity            Decimal  @db.Decimal(12, 3)
   notes               String?
   // Stage 2C-1: true once the supervisor edits this row's quantity; a pre-filled estimate stays
   // null/false. Persisted (not client state) because a draft can be saved and submitted across
@@ -1021,7 +1026,7 @@ model EmailSend {
   id             String          @id @default(cuid())
   subject        String
   bodyText       String?
-  entityType     String // 'DAILY_REPORT' | 'MATERIAL_REQUEST'
+  entityType     String // 'DAILY_REPORT' | 'MATERIAL_REQUEST' | 'VALUATION' | 'REPORT_MISSING'
   entityId       String
   entityCode     String // frozen label — survives a later rename
   projectId      String?
@@ -1050,4 +1055,27 @@ model EmailRecipient {
   user      User?     @relation("EmailRecipientUser", fields: [userId], references: [id])
 
   @@index([emailSendId])
+}
+
+// ─── NOTIFICATION LISTS (Phase B-2) ───────────────────────────────────────────
+// GLOBAL (not per-project) distribution lists an ADMIN maintains, one per event type. A row is
+// an address (frozen for delivery); userId is set when the address belongs to an app user, so a
+// list survives that user's email being edited later only if re-added — the address is the record.
+enum NotificationType {
+  VALUATION_CERTIFIED
+  REPORT_MISSING
+  WEEKLY_SUMMARY // unused until Phase C; defined now
+}
+
+model NotificationRecipient {
+  id        String           @id @default(cuid())
+  type      NotificationType
+  address   String
+  userId    String? // set when the recipient is an app user
+  createdAt DateTime         @default(now())
+
+  user User? @relation("NotificationRecipientUser", fields: [userId], references: [id])
+
+  @@unique([type, address])
+  @@index([type])
 }

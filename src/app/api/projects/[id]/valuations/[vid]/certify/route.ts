@@ -5,6 +5,7 @@ import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
 import { expectedReceiptDate } from '@/lib/valuation'
 import { computeValuation, computationToHeader, computationToLines, certifyBlockers } from '@/lib/valuation.server'
+import { notifyValuationCertified } from '@/lib/notify/events.server'
 
 /**
  * Record the client's approval of a certificate. This is the freeze point: the header money,
@@ -83,6 +84,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     },
     ipAddress: getClientIp(req),
   })
+
+  // Notify the VALUATION_CERTIFIED list — AFTER the freeze transaction commits, never inside it,
+  // so a mail failure cannot roll back a certification. An empty list sends nothing. Never throws.
+  await notifyValuationCertified(existing.id, guard.user.id)
 
   return NextResponse.json({ ok: true, status: 'CERTIFIED', certifiedAt: certifiedAt.toISOString() })
 }
