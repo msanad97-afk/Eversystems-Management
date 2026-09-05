@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client'
 import { isNonEmptyString } from '@/lib/validation'
+import { resolveSubActivityWeights } from '@/lib/progress/weights'
 import { IMPLICIT_SUBACTIVITY_NAME } from './constants'
 
 /**
@@ -19,11 +20,19 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
 }
 
+/** A progress weight: blank/absent → null (unweighted); a finite number → itself; else undefined (invalid). */
+function parseWeight(v: unknown): number | null | undefined {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
 export interface ParsedSub {
   name: string
   type: LineType
   lumpsumBhd: number | null
   isImplicit: boolean
+  weightPct: number | null
   manpowerRates: { laborCategoryId: string; hoursPerUnit: number }[]
   materialRates: { materialId: string; qtyPerUnit: number }[]
 }
@@ -96,23 +105,28 @@ export function parseCatalogActivity(body: unknown): ParsedCatalogActivity | { e
       const key = sName.toLowerCase()
       if (seenNames.has(key)) return { error: `Duplicate sub-activity name "${sName}".` }
       seenNames.add(key)
+      const weightPct = parseWeight(s.weightPct)
+      if (weightPct === undefined) return { error: `Sub-activity "${sName}": weight must be a number.` }
       const sType: LineType = s.type === 'LUMPSUM' ? 'LUMPSUM' : 'MEASURED'
       if (sType === 'LUMPSUM') {
         const sLump = parsePositive(s.lumpsumBhd)
         if (sLump === null) return { error: `Lumpsum sub-activity "${sName}" needs a BHD amount greater than 0.` }
-        subActivities.push({ name: sName, type: 'LUMPSUM', lumpsumBhd: sLump, isImplicit: false, manpowerRates: [], materialRates: [] })
+        subActivities.push({ name: sName, type: 'LUMPSUM', lumpsumBhd: sLump, isImplicit: false, weightPct, manpowerRates: [], materialRates: [] })
       } else {
         const rates = parseRates(s)
         if ('error' in rates) return { error: `Sub-activity "${sName}": ${rates.error}` }
-        subActivities.push({ name: sName, type: 'MEASURED', lumpsumBhd: null, isImplicit: false, ...rates })
+        subActivities.push({ name: sName, type: 'MEASURED', lumpsumBhd: null, isImplicit: false, weightPct, ...rates })
       }
     }
+    // Weights are a set rule across the named sub-activities — validate them once, together.
+    const weights = resolveSubActivityWeights(subActivities.map((s) => ({ id: s.name, weightPct: s.weightPct })))
+    if (!weights.ok) return { error: weights.error }
   } else {
     // Flat measured activity: any rates provided attach to a single hidden implicit sub-activity.
     const rates = parseRates(b.activityRates)
     if ('error' in rates) return { error: rates.error }
     if (rates.manpowerRates.length > 0 || rates.materialRates.length > 0) {
-      subActivities.push({ name: IMPLICIT_SUBACTIVITY_NAME, type: 'MEASURED', lumpsumBhd: null, isImplicit: true, ...rates })
+      subActivities.push({ name: IMPLICIT_SUBACTIVITY_NAME, type: 'MEASURED', lumpsumBhd: null, isImplicit: true, weightPct: null, ...rates })
     }
     // else: bare measured activity with no budget (allowed).
   }
@@ -128,6 +142,7 @@ export function subActivityCreateInput(subs: ParsedSub[]): Prisma.CatalogSubActi
     lumpsumBhd: s.lumpsumBhd,
     sortOrder: i,
     isImplicit: s.isImplicit,
+    weightPct: s.weightPct,
     manpowerRates: { create: s.manpowerRates.map((r) => ({ laborCategoryId: r.laborCategoryId, hoursPerUnit: r.hoursPerUnit })) },
     materialRates: { create: s.materialRates.map((r) => ({ materialId: r.materialId, qtyPerUnit: r.qtyPerUnit })) },
   }))
@@ -152,6 +167,7 @@ export const catalogActivitySelect = {
       type: true,
       lumpsumBhd: true,
       isImplicit: true,
+      weightPct: true,
       sortOrder: true,
       manpowerRates: { select: { laborCategoryId: true, hoursPerUnit: true, category: { select: { name: true } } } },
       materialRates: { select: { materialId: true, qtyPerUnit: true, material: { select: { name: true, unit: true } } } },
@@ -174,6 +190,7 @@ type SerializableCatalogActivity = {
     type: LineType
     lumpsumBhd: unknown
     isImplicit: boolean
+    weightPct: unknown
     sortOrder: number
     manpowerRates: { laborCategoryId: string; hoursPerUnit: unknown; category: { name: string } }[]
     materialRates: { materialId: string; qtyPerUnit: unknown; material: { name: string; unit: string } }[]
@@ -195,6 +212,7 @@ export interface CatalogActivityDTO {
     type: LineType
     lumpsumBhd: number | null
     isImplicit: boolean
+    weightPct: number | null
     manpowerRates: { laborCategoryId: string; laborCategoryName: string; hoursPerUnit: number }[]
     materialRates: { materialId: string; materialName: string; materialUnit: string; qtyPerUnit: number }[]
   }[]
@@ -216,6 +234,7 @@ export function serializeCatalogActivity(a: SerializableCatalogActivity): Catalo
       type: s.type,
       lumpsumBhd: s.lumpsumBhd == null ? null : Number(s.lumpsumBhd),
       isImplicit: s.isImplicit,
+      weightPct: s.weightPct == null ? null : Number(s.weightPct),
       manpowerRates: s.manpowerRates.map((r) => ({
         laborCategoryId: r.laborCategoryId,
         laborCategoryName: r.category.name,

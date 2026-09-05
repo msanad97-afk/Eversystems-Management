@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useToast } from '@/contexts/ToastContext'
+import { resolveSubActivityWeights } from '@/lib/progress/weights'
 
 export interface ScopeActivityData {
   id: string
@@ -54,6 +55,7 @@ export interface ScopeSubRow {
   type: 'MEASURED' | 'LUMPSUM'
   isActive: boolean
   reportedCount: number
+  weightPct: number | null
 }
 
 function bhd(n: number): string {
@@ -405,6 +407,18 @@ export function ScopeManager({
                             })}
                           </ul>
                         )}
+
+                        {isOpen && namedSubs.some((s) => s.isActive) && (
+                          <SubActivityWeights
+                            activeSubs={namedSubs.filter((s) => s.isActive)}
+                            busy={busy}
+                            onSave={async (weights) => {
+                              const ok = await call('PATCH', `/api/activities/${act.id}/subactivities`, { weights })
+                              if (ok) showToast('Weights saved — reported % complete now reflects the new weighting.', 'success')
+                              return ok
+                            }}
+                          />
+                        )}
                       </div>
                       )
                     })}
@@ -491,6 +505,65 @@ function UnitInput({ value, onChange, unitSuggestions }: { value: string; onChan
         ))}
       </datalist>
     </>
+  )
+}
+
+/**
+ * Progress-weight editor for a placed activity's active named sub-activities. Blank = unweighted
+ * (an equal share of the remainder). The RESOLVED percentage is shown live beside each row via the
+ * one shared rule, so the admin sees what the entered numbers actually produce. Saving warns first.
+ */
+function SubActivityWeights({
+  activeSubs,
+  busy,
+  onSave,
+}: {
+  activeSubs: ScopeSubRow[]
+  busy: boolean
+  onSave: (weights: { subId: string; weightPct: number | null }[]) => Promise<boolean>
+}) {
+  const [edits, setEdits] = useState<Record<string, string>>(() =>
+    Object.fromEntries(activeSubs.map((s) => [s.id, s.weightPct == null ? '' : String(s.weightPct)])),
+  )
+  const parsed = activeSubs.map((s) => {
+    const raw = edits[s.id] ?? ''
+    return { subId: s.id, weightPct: raw.trim() === '' ? null : Number(raw) }
+  })
+  const resolution = resolveSubActivityWeights(parsed.map((p) => ({ id: p.subId, weightPct: p.weightPct })))
+  const resolvedById = resolution.ok ? new Map(resolution.resolved.map((r) => [r.id, r.weightPct])) : null
+
+  async function save() {
+    if (!resolution.ok) return
+    const ok = confirm(
+      'Changing weights changes this activity’s reported percent complete, including work already reported. ' +
+        'Certified valuations are unaffected and will not change.',
+    )
+    if (!ok) return
+    await onSave(parsed)
+  }
+
+  return (
+    <div className="ml-8 mt-2 rounded-md border border-border bg-surface-muted p-2">
+      <p className="mb-1 text-xs font-medium text-fg-subtle">Progress weights — leave blank to share the remainder equally.</p>
+      <div className="space-y-1">
+        {activeSubs.map((s) => (
+          <div key={s.id} className="flex items-center gap-2 text-sm">
+            <span className="min-w-0 flex-1 truncate text-fg">{s.name}</span>
+            <input
+              type="number" inputMode="decimal" min={0} max={100} step="any" placeholder="—"
+              value={edits[s.id] ?? ''}
+              onChange={(e) => setEdits((p) => ({ ...p, [s.id]: e.target.value }))}
+              className="w-20 rounded-md border border-border bg-surface px-2 py-1 text-sm tabular-nums text-fg"
+            />
+            <span className="w-16 text-right text-xs tabular-nums text-fg-subtle">{resolvedById ? `${resolvedById.get(s.id) ?? 0}%` : '—'}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className="text-xs text-danger">{resolution.ok ? '' : resolution.error}</span>
+        <Button size="sm" onClick={save} loading={busy} disabled={!resolution.ok}>Save weights</Button>
+      </div>
+    </div>
   )
 }
 

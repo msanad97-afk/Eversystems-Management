@@ -64,7 +64,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
     prisma.subActivity.findMany({
       where: { activityId: { in: rawActs.map((x) => x.id) } },
       orderBy: { sortOrder: 'asc' },
-      select: { id: true, activityId: true, name: true, type: true, isActive: true, isImplicit: true, _count: { select: { progress: true } } },
+      select: { id: true, activityId: true, name: true, type: true, isActive: true, isImplicit: true, weightPct: true, _count: { select: { progress: true } } },
     }),
     catalogIds.length
       ? prisma.catalogSubActivity.findMany({ where: { catalogActivityId: { in: catalogIds }, isImplicit: false }, orderBy: { sortOrder: 'asc' }, select: { id: true, name: true, type: true, catalogActivityId: true } })
@@ -86,7 +86,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
     // The implicit sub has no UI presence anywhere — never list it.
     subActivitiesByActivity[act.id] = subs
       .filter((s) => !s.isImplicit)
-      .map((s) => ({ id: s.id, name: s.name, type: s.type, isActive: s.isActive, reportedCount: s._count.progress }))
+      .map((s) => ({ id: s.id, name: s.name, type: s.type, isActive: s.isActive, reportedCount: s._count.progress, weightPct: s.weightPct == null ? null : Number(s.weightPct) }))
   }
 
   return (

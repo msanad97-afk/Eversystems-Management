@@ -5,6 +5,7 @@ import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
 import { isNonEmptyString } from '@/lib/validation'
 import { catalogSubRateInclude, copiedSubActivityCreate } from '@/lib/catalog/snapshot'
+import { resolveSubActivityWeights } from '@/lib/progress/weights'
 
 /**
  * Add ONE sub-activity to an already-placed project activity (ADMIN). Two modes in one endpoint:
@@ -123,4 +124,63 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     ipAddress: getClientIp(req),
   })
   return NextResponse.json({ subActivity: created }, { status: 201 })
+}
+
+/**
+ * Set the progress WEIGHTS across a placed activity's named sub-activities (ADMIN). Weighting is a
+ * set rule, so it is validated and saved as a whole. Physical % is derived at read time, so this
+ * changes the activity's reported percent complete (including work already reported); certified
+ * valuations are frozen and never move. Body: { weights: [{ subId, weightPct }] } (weightPct null =
+ * unweighted). Audited as SUBACTIVITY_UPDATED.
+ */
+export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const guard = await requireAdmin()
+  if ('error' in guard) return guard.error
+
+  const activity = await prisma.activity.findUnique({
+    where: { id: params.id },
+    select: {
+      id: true, name: true, asset: { select: { projectId: true } },
+      subActivities: { where: { isActive: true, isImplicit: false }, select: { id: true, weightPct: true } },
+    },
+  })
+  if (!activity) return NextResponse.json({ error: 'Activity not found.' }, { status: 404 })
+
+  const body = await req.json().catch(() => null)
+  if (!body || !Array.isArray(body.weights)) return NextResponse.json({ error: 'weights[] is required.' }, { status: 400 })
+
+  // Incoming weights by subId, each blank/absent → null, a finite number → itself, else invalid.
+  const incoming = new Map<string, number | null>()
+  const ownIds = new Set(activity.subActivities.map((s) => s.id))
+  for (const w of body.weights) {
+    if (!w || typeof w !== 'object' || !isNonEmptyString(w.subId)) return NextResponse.json({ error: 'Each weight needs a subId.' }, { status: 400 })
+    if (!ownIds.has(w.subId)) return NextResponse.json({ error: 'A weight refers to a sub-activity not on this activity.' }, { status: 400 })
+    const raw = (w as { weightPct?: unknown }).weightPct
+    if (raw === null || raw === undefined || raw === '') { incoming.set(w.subId, null); continue }
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return NextResponse.json({ error: 'A weight must be a number.' }, { status: 400 })
+    incoming.set(w.subId, n)
+  }
+
+  // Resolve/validate the whole set (fall back to the sub's current weight where none was sent).
+  const set = activity.subActivities.map((s) => ({ id: s.id, weightPct: incoming.has(s.id) ? incoming.get(s.id)! : (s.weightPct == null ? null : Number(s.weightPct)) }))
+  const resolved = resolveSubActivityWeights(set)
+  if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: 400 })
+
+  await prisma.$transaction(async (tx) => {
+    for (const s of set) {
+      await tx.subActivity.update({ where: { id: s.id }, data: { weightPct: s.weightPct } })
+    }
+  })
+
+  writeAuditLog({
+    action: 'SUBACTIVITY_UPDATED',
+    userId: guard.user.id,
+    projectId: activity.asset.projectId,
+    entity: 'Activity',
+    entityId: activity.id,
+    metadata: { activityId: activity.id, activityName: activity.name, op: 'weights', count: set.length },
+    ipAddress: getClientIp(req),
+  })
+  return NextResponse.json({ ok: true })
 }

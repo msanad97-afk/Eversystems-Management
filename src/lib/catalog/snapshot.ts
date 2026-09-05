@@ -20,6 +20,7 @@ export interface CatalogSubWithRates {
   lumpsumBhd: Prisma.Decimal | null
   sortOrder: number
   isImplicit: boolean
+  weightPct: Prisma.Decimal | null
   manpowerRates: { laborCategoryId: string; hoursPerUnit: Prisma.Decimal; category: { hourlyRate: Prisma.Decimal | null } }[]
   materialRates: { materialId: string; qtyPerUnit: Prisma.Decimal; material: { unitRate: Prisma.Decimal | null } }[]
 }
@@ -37,6 +38,7 @@ export function copiedSubActivityCreate(s: CatalogSubWithRates) {
     lumpsumBhd: s.lumpsumBhd ? Number(s.lumpsumBhd) : null,
     sortOrder: s.sortOrder,
     isImplicit: s.isImplicit,
+    weightPct: s.weightPct == null ? null : Number(s.weightPct), // snapshot the progress weight, like every other rate
     manpowerBudget: {
       create: s.manpowerRates.map((r) => ({
         laborCategoryId: r.laborCategoryId,

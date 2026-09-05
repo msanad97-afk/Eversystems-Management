@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { loadProjectBudget } from '@/lib/budget.server'
 import { cumulativePercent } from '@/lib/reports/rules'
+import { weightedActivityPercent } from '@/lib/progress/weights'
 import {
   buildMeasuredVariance,
   lumpsumEarned,
@@ -91,7 +92,7 @@ export async function loadBudgetVsActual(projectId: string): Promise<ProjectBudg
     where: { isActive: true, asset: { projectId, isActive: true } },
     select: {
       id: true, boqQuantity: true,
-      subActivities: { where: { isActive: true }, select: { id: true, type: true, lumpsumBhd: true } },
+      subActivities: { where: { isActive: true }, select: { id: true, type: true, lumpsumBhd: true, weightPct: true } },
     },
   })
 
@@ -127,8 +128,10 @@ export async function loadBudgetVsActual(projectId: string): Promise<ProjectBudg
     const measuredSubs = a.subActivities.filter((s) => s.type === 'MEASURED')
     const lumpsumSubs = a.subActivities.filter((s) => s.type === 'LUMPSUM')
     if (measuredSubs.length > 0) {
-      const mean = measuredSubs.reduce((sum, s) => sum + cumulativePercent(earnedBySub.get(s.id) ?? 0, boq), 0) / measuredSubs.length
-      physicalByActivity.set(a.id, round(mean, 2))
+      // WEIGHTED sum of the measured subs' %s using the resolved weights (was the unweighted mean).
+      const subs = a.subActivities.map((s) => ({ id: s.id, type: s.type as 'MEASURED' | 'LUMPSUM', weightPct: s.weightPct == null ? null : Number(s.weightPct) }))
+      const measuredPct = new Map(measuredSubs.map((s) => [s.id, cumulativePercent(earnedBySub.get(s.id) ?? 0, boq)]))
+      physicalByActivity.set(a.id, round(weightedActivityPercent(subs, measuredPct), 2))
     }
     if (lumpsumSubs.length > 0) {
       const earned = lumpsumSubs.reduce((sum, s) => sum + lumpsumEarned(latestPctBySub.get(s.id) ?? 0, s.lumpsumBhd ? Number(s.lumpsumBhd) : 0), 0)

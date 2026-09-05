@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useToast } from '@/contexts/ToastContext'
+import { resolveSubActivityWeights } from '@/lib/progress/weights'
 import type { CatalogActivityDTO } from '@/lib/catalog/payload'
 
 export interface LaborOption { id: string; name: string }
@@ -15,7 +16,7 @@ export interface MaterialOption { id: string; name: string; unit: string }
 
 type LineType = 'MEASURED' | 'LUMPSUM'
 interface RateLine { key: string; id: string; value: string }
-interface SubDraft { key: string; name: string; type: LineType; lumpsum: string; manpower: RateLine[]; materials: RateLine[] }
+interface SubDraft { key: string; name: string; type: LineType; lumpsum: string; weight: string; manpower: RateLine[]; materials: RateLine[] }
 interface EditorState {
   id?: string
   name: string
@@ -60,6 +61,7 @@ function toEditor(a: CatalogActivityDTO): EditorState {
       name: s.name,
       type: s.type,
       lumpsum: s.lumpsumBhd != null ? String(s.lumpsumBhd) : '',
+      weight: s.weightPct != null ? String(s.weightPct) : '',
       manpower: toLines(s.manpowerRates, 'm'),
       materials: toLines(s.materialRates, 'x'),
     })),
@@ -79,11 +81,12 @@ function buildPayload(s: EditorState): Record<string, unknown> {
   }
   const base: Record<string, unknown> = { name: s.name.trim(), type: 'MEASURED', unit: s.unit.trim(), description: s.description.trim() || null }
   if (s.detailed) {
-    base.subActivities = s.subs.map((sub) =>
-      sub.type === 'LUMPSUM'
-        ? { name: sub.name.trim(), type: 'LUMPSUM', lumpsumBhd: Number(sub.lumpsum) }
-        : { name: sub.name.trim(), type: 'MEASURED', manpowerRates: manpowerPayload(sub.manpower), materialRates: materialPayload(sub.materials) },
-    )
+    base.subActivities = s.subs.map((sub) => {
+      const weightPct = sub.weight.trim() === '' ? null : Number(sub.weight)
+      return sub.type === 'LUMPSUM'
+        ? { name: sub.name.trim(), type: 'LUMPSUM', lumpsumBhd: Number(sub.lumpsum), weightPct }
+        : { name: sub.name.trim(), type: 'MEASURED', weightPct, manpowerRates: manpowerPayload(sub.manpower), materialRates: materialPayload(sub.materials) }
+    })
   } else {
     base.activityRates = { manpowerRates: manpowerPayload(s.flatManpower), materialRates: materialPayload(s.flatMaterials) }
   }
@@ -299,7 +302,12 @@ function ActivityEditor({
             Break into sub-activities
           </label>
 
-          {state.detailed ? (
+          {state.detailed ? (() => {
+            // Live weight resolution over the current sub set (the one shared rule), so the admin
+            // sees the resolved percentage each entry produces — including equal shares for blanks.
+            const wres = resolveSubActivityWeights(state.subs.map((s) => ({ id: s.key, weightPct: s.weight.trim() === '' ? null : Number(s.weight) })))
+            const resolvedByKey = wres.ok ? new Map(wres.resolved.map((r) => [r.id, r.weightPct])) : null
+            return (
             <div className="space-y-3">
               {state.subs.map((sub, i) => (
                 <div key={sub.key} className="space-y-2 rounded-md border border-border p-3">
@@ -307,12 +315,18 @@ function ActivityEditor({
                     <Input label="Sub-activity" value={sub.name} onChange={(e) => set({ subs: state.subs.map((s, j) => (j === i ? { ...s, name: e.target.value } : s)) })} placeholder="Base coat + mesh" />
                     <button type="button" onClick={() => set({ subs: state.subs.filter((_, j) => j !== i) })} className="mt-6 text-fg-subtle hover:text-danger" aria-label="Remove sub-activity">✕</button>
                   </div>
-                  <div className="flex gap-1 rounded-md border border-border bg-surface p-1">
-                    {(['MEASURED', 'LUMPSUM'] as LineType[]).map((t) => (
-                      <button key={t} type="button" onClick={() => set({ subs: state.subs.map((s, j) => (j === i ? { ...s, type: t } : s)) })} className={`flex-1 rounded px-2 py-1 text-xs font-medium ${sub.type === t ? 'bg-primary-50 text-primary-700' : 'text-fg-muted'}`}>
-                        {t === 'MEASURED' ? 'Measured' : 'Lumpsum'}
-                      </button>
-                    ))}
+                  <div className="flex items-end gap-2">
+                    <div className="flex flex-1 gap-1 rounded-md border border-border bg-surface p-1">
+                      {(['MEASURED', 'LUMPSUM'] as LineType[]).map((t) => (
+                        <button key={t} type="button" onClick={() => set({ subs: state.subs.map((s, j) => (j === i ? { ...s, type: t } : s)) })} className={`flex-1 rounded px-2 py-1 text-xs font-medium ${sub.type === t ? 'bg-primary-50 text-primary-700' : 'text-fg-muted'}`}>
+                          {t === 'MEASURED' ? 'Measured' : 'Lumpsum'}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="w-24">
+                      <Input label="Weight %" type="number" inputMode="decimal" min={0} max={100} step="any" placeholder="—" value={sub.weight} onChange={(e) => set({ subs: state.subs.map((s, j) => (j === i ? { ...s, weight: e.target.value } : s)) })} />
+                    </div>
+                    <span className="mb-2 w-14 text-right text-xs tabular-nums text-fg-subtle" title="Resolved share">{resolvedByKey ? `${resolvedByKey.get(sub.key) ?? 0}%` : '—'}</span>
                   </div>
                   {sub.type === 'LUMPSUM' ? (
                     <Input label="Lumpsum (BHD)" type="number" inputMode="decimal" min={0} step="any" value={sub.lumpsum} onChange={(e) => set({ subs: state.subs.map((s, j) => (j === i ? { ...s, lumpsum: e.target.value } : s)) })} />
@@ -324,9 +338,11 @@ function ActivityEditor({
                   )}
                 </div>
               ))}
-              <Button size="sm" variant="secondary" onClick={() => set({ subs: [...state.subs, { key: nextKey(), name: '', type: 'MEASURED', lumpsum: '', manpower: [], materials: [] }] })}>+ Add sub-activity</Button>
+              {!wres.ok && <p className="text-xs text-danger">{wres.error}</p>}
+              <Button size="sm" variant="secondary" onClick={() => set({ subs: [...state.subs, { key: nextKey(), name: '', type: 'MEASURED', lumpsum: '', weight: '', manpower: [], materials: [] }] })}>+ Add sub-activity</Button>
             </div>
-          ) : (
+            )
+          })() : (
             <div className="space-y-3 rounded-md border border-border p-3">
               <p className="text-xs text-fg-subtle">Rates apply per {state.unit.trim() || 'unit'} of this activity.</p>
               <RateEditor title="Manpower" options={laborOptions} lines={state.flatManpower} unitLabel="hrs/unit" onChange={(lines) => set({ flatManpower: lines })} />

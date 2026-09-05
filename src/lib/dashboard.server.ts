@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { weightedActivityPercent } from '@/lib/progress/weights'
 import {
   aggregateDashboard,
   aggregateProgress,
@@ -137,7 +138,9 @@ export async function loadDashboard(input: {
         orderBy: { sortOrder: 'asc' },
         select: {
           id: true, ref: true, name: true, unit: true, boqQuantity: true,
-          subActivities: { where: { isActive: true, type: 'MEASURED' }, select: { id: true } },
+          // All active subs (measured + lumpsum) so weights resolve over the full set; earned is
+          // then combined over the MEASURED ones (see weightedActivityPercent).
+          subActivities: { where: { isActive: true }, select: { id: true, type: true, weightPct: true } },
         },
       },
     },
@@ -158,11 +161,13 @@ export async function loadDashboard(input: {
   const projMeta = new Map(activeProjects.map((p) => [p.id, p]))
   const progressRows: ProgressRow[] = assetsForProgress.flatMap((asset) =>
     asset.activities
-      .filter((act) => act.subActivities.length > 0)
+      .filter((act) => act.subActivities.some((s) => s.type === 'MEASURED'))
       .map((act) => {
         const boq = Number(act.boqQuantity)
-        const perSubPct = act.subActivities.map((s) => (boq > 0 ? Math.min(100, ((earnedBySub.get(s.id) ?? 0) / boq) * 100) : 0))
-        const meanPct = perSubPct.reduce((a, b) => a + b, 0) / perSubPct.length
+        const subs = act.subActivities.map((s) => ({ id: s.id, type: s.type as 'MEASURED' | 'LUMPSUM', weightPct: s.weightPct == null ? null : Number(s.weightPct) }))
+        const measuredPct = new Map(subs.filter((s) => s.type === 'MEASURED').map((s) => [s.id, boq > 0 ? Math.min(100, ((earnedBySub.get(s.id) ?? 0) / boq) * 100) : 0]))
+        // WEIGHTED sum of the measured subs' %s using the resolved weights (was the unweighted mean).
+        const meanPct = weightedActivityPercent(subs, measuredPct)
         return {
           projectId: asset.projectId,
           projectCode: projMeta.get(asset.projectId)?.projectCode ?? '',

@@ -302,6 +302,9 @@ model CatalogSubActivity {
   lumpsumBhd        Decimal? @db.Decimal(18, 3) // default COST budget in BHD if this sub-activity is LUMPSUM (cost only)
   sortOrder         Int      @default(0)
   isImplicit        Boolean  @default(false) // hidden line carrying a flat activity's rates
+  // Physical-progress weight, 0–100. Null = unweighted → takes an equal share of the remainder.
+  // Snapshotted onto the placed SubActivity at placement, like every other rate.
+  weightPct         Decimal? @db.Decimal(6, 3)
 
   catalogActivity CatalogActivity       @relation(fields: [catalogActivityId], references: [id], onDelete: Cascade)
   manpowerRates   CatalogManpowerRate[]
@@ -453,6 +456,9 @@ model SubActivity {
   sortOrder  Int      @default(0)
   isActive   Boolean  @default(true)
   isImplicit Boolean  @default(false) // the hidden single line carrying a flat activity's rates
+  // Physical-progress weight, 0–100. Null = unweighted → equal share of the remainder. Frozen copy
+  // of the catalogue weight at placement (never re-read from the catalog thereafter).
+  weightPct  Decimal? @db.Decimal(6, 3)
   createdAt  DateTime @default(now())
 
   activity       Activity                    @relation(fields: [activityId], references: [id], onDelete: Cascade)
