@@ -99,15 +99,23 @@ describe('2. material request reviewed → requester', () => {
 
 describe('3. valuation certified → the VALUATION_CERTIFIED list', () => {
   it('emails everyone on the list, no attachment', async () => {
+    // The VALUATION_CERTIFIED list is GLOBAL (getListRecipients returns every row of the type), so
+    // these rows are visible to any concurrent test file's certify. Delete them the instant the
+    // assertion is done (finally) to keep the exposure window to this single test. The real defence
+    // is the transport guard in transport.ts; this only narrows the race. (Incident 01/09.)
     await prisma.notificationRecipient.createMany({ data: [
       { type: 'VALUATION_CERTIFIED', address: `finance_${sfx}@e.local` },
       { type: 'VALUATION_CERTIFIED', address: `qs_${sfx}@e.local` },
     ] })
-    await notifyValuationCertified(ids.valuationId!, ids.adminId!)
-    const mail = lastMail()
-    expect(mail?.to).toContain(`finance_${sfx}@e.local`)
-    expect(mail?.to).toContain(`qs_${sfx}@e.local`)
-    expect(mail?.attachments).toBeUndefined()
+    try {
+      await notifyValuationCertified(ids.valuationId!, ids.adminId!)
+      const mail = lastMail()
+      expect(mail?.to).toContain(`finance_${sfx}@e.local`)
+      expect(mail?.to).toContain(`qs_${sfx}@e.local`)
+      expect(mail?.attachments).toBeUndefined()
+    } finally {
+      await prisma.notificationRecipient.deleteMany({ where: { type: 'VALUATION_CERTIFIED', address: { contains: sfx } } })
+    }
   })
 
   it('an empty list sends nothing and records why in the audit (no error)', async () => {

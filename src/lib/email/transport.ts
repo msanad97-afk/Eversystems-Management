@@ -39,16 +39,29 @@ function getTransport() {
   })
 }
 
+/**
+ * A test must NEVER reach a real mail transport, regardless of what env vars happen to be set.
+ * Per-file mocking is discipline, not a guarantee — one unmocked test that hits a mail route with
+ * live SMTP creds in the shell sends a real email (this happened 01/09). This is the hard guard:
+ * under Vitest (or NODE_ENV=test) `sendMail` logs the message but does not open a connection.
+ */
+function isUnderTest(): boolean {
+  return process.env.VITEST != null || process.env.NODE_ENV === 'test'
+}
+
 export async function sendMail({ to, subject, html, text, attachments }: SendMailInput): Promise<void> {
   const from = process.env.SMTP_FROM ?? 'Eversystems Management <no-reply@eversystems.local>'
-  const transport = getTransport()
+  // Refuse to send under test even when SMTP_HOST/USER/PASSWORD are configured; fall through to the
+  // same log path as the no-credentials case so a test can still see what would have gone out.
+  const transport = isUnderTest() ? null : getTransport()
 
   if (!transport) {
+    const reason = isUnderTest() ? 'running under test' : 'SMTP not configured'
     const files = attachments?.length
       ? `\n  attachments: ${attachments.map((a) => `${a.filename} (${a.content.length} bytes)`).join(', ')}`
       : ''
     console.info(
-      `\n[email:dev] SMTP not configured — message not sent.\n  to: ${to}\n  subject: ${subject}${files}\n  ${text ?? html}\n`,
+      `\n[email:dev] ${reason} — message not sent.\n  to: ${to}\n  subject: ${subject}${files}\n  ${text ?? html}\n`,
     )
     return
   }

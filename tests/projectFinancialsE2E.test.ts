@@ -10,6 +10,10 @@ import { PrismaClient } from '@prisma/client'
  */
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }))
 vi.mock('@/lib/audit', () => ({ writeAuditLog: vi.fn(), recordAuditLog: vi.fn() }))
+// Belt-and-braces: the certify route fires the VALUATION_CERTIFIED notification, which reads the
+// shared DB's global recipient list. The transport guard in transport.ts is the real defence; this
+// mock keeps the send off the wire even so. (Incident 01/09.)
+vi.mock('@/lib/email/transport', () => ({ sendMail: vi.fn() }))
 
 import { getServerSession } from 'next-auth'
 import { PATCH as patchProject } from '@/app/api/projects/[id]/route'
