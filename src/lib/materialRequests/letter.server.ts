@@ -35,6 +35,8 @@ export async function loadMaterialRequestLetter(
   if (request.status !== 'APPROVED' && request.status !== 'PARTIALLY_APPROVED') return null
 
   const fmtDate = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: APP_TIMEZONE })
+  // The review timestamp carries date AND time (electronic-approval statement on the letter).
+  const fmtDateTime = (d: Date) => d.toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: APP_TIMEZONE })
 
   const data: MaterialRequestPdfData = {
     requestCode: request.requestCode,
@@ -46,7 +48,7 @@ export async function loadMaterialRequestLetter(
     },
     requestedBy: `${request.requestedBy.firstName} ${request.requestedBy.lastName}`,
     reviewedBy: request.reviewedBy ? `${request.reviewedBy.firstName} ${request.reviewedBy.lastName}` : null,
-    reviewedAt: request.reviewedAt ? fmtDate(request.reviewedAt) : null,
+    reviewedAt: request.reviewedAt ? fmtDateTime(request.reviewedAt) : null,
     reviewNote: request.reviewNote,
     // Approved quantities only; drop rejected (0) lines — procurement acts on what to bring.
     lines: request.lines

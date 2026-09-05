@@ -20,7 +20,7 @@ export interface MaterialRequestPdfData {
   scope: { project: string; asset: string | null; activity: string | null }
   requestedBy: string
   reviewedBy: string | null
-  reviewedAt: string | null // pre-formatted date
+  reviewedAt: string | null // pre-formatted date + time (APP_TIMEZONE)
   reviewNote: string | null
   lines: MrPdfLine[] // approved lines only (approvedQty > 0)
   generatedAt: string
@@ -40,7 +40,11 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', paddingVertical: 3, borderBottomWidth: 0.5, borderBottomColor: '#F1F1EF' },
   muted: { color: '#7C7A73' },
   notes: { marginTop: 4, lineHeight: 1.4 },
-  signRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 36 },
+  // Electronic-approval statement — a printed authorisation, NOT a blank line to sign (no rule above).
+  approvalBlock: { marginTop: 28 },
+  approvalStatement: { fontSize: 10, fontWeight: 600, color: '#1A1917' },
+  approvalTimestamp: { fontSize: 9, color: '#5A5852', marginTop: 2 },
+  signRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 28 },
   signBox: { width: '45%' },
   signLine: { borderTopWidth: 1, borderTopColor: '#A8A6A0', marginTop: 28, paddingTop: 4, fontSize: 9, color: '#5A5852' },
   footer: { position: 'absolute', bottom: 20, left: 40, right: 40, flexDirection: 'row', justifyContent: 'space-between', fontSize: 8, color: '#A8A6A0' },
@@ -89,6 +93,13 @@ export function MaterialRequestPdf({ data }: { data: MaterialRequestPdfData }) {
             <Text style={styles.sectionTitle}>Review note</Text>
             <Text style={styles.notes}>{data.reviewNote}</Text>
           </>
+        ) : null}
+
+        {data.reviewedBy ? (
+          <View style={styles.approvalBlock}>
+            <Text style={styles.approvalStatement}>Approved electronically by {data.reviewedBy}</Text>
+            {data.reviewedAt ? <Text style={styles.approvalTimestamp}>{data.reviewedAt}</Text> : null}
+          </View>
         ) : null}
 
         <View style={styles.signRow}>

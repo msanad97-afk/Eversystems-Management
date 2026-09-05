@@ -80,6 +80,16 @@ describe('material-request letter data', () => {
     expect(data.scope.activity).toBe('Blockwork')
   })
 
+  it('carries the approver name and the review date AND time (APP_TIMEZONE)', async () => {
+    const { data } = (await loadMaterialRequestLetter(ids.reviewedId!))!
+    expect(data.reviewedBy).toBe('Adam Admin') // from the record, not hardcoded
+    // reviewedAt was 2026-08-05T09:00Z → 12:00 in Asia/Bahrain (UTC+3), with the time now surviving.
+    expect(data.reviewedAt).toContain('August')
+    expect(data.reviewedAt).toContain('2026')
+    expect(data.reviewedAt).toMatch(/\d{1,2}:\d{2}/) // a time is present, not a date alone
+    expect(data.reviewedAt).toContain('12:00')
+  })
+
   it('is not printable while unreviewed (draft → null)', async () => {
     expect(await loadMaterialRequestLetter(ids.draftId!)).toBeNull()
   })
