@@ -1,40 +1,61 @@
 import { prisma } from '@/lib/prisma'
 import { loadProjectEvm } from '@/lib/evm.server'
-import { loadBudgetVsActual } from '@/lib/actuals.server'
+import { loadBudgetVsActual, type SubActivityProgress } from '@/lib/actuals.server'
+import { cumulativePercent } from '@/lib/reports/rules'
 
 /**
  * Project breakdown for the admin project page AND the Phase C weekly PDF — the loader is the
- * deliverable, the screen its first consumer. ONE money block at project level plus a money-FREE
- * asset → activity tree of physical progress.
+ * deliverable, the screen its first consumer. ONE money block at project level plus a per-ACTIVITY
+ * progress MATRIX: one table per active activity, assets as rows, that activity's sub-activities as
+ * columns, cumulative % in the cells and the weighted physical % in a final total column.
  *
  * Reuse only — NO second EVM or progress computation:
  *   - project money + value-weighted completion (EV/BAC) come from loadProjectEvm (evm.server).
- *   - weighted physical % per activity comes from loadBudgetVsActual (actuals.server), which itself
- *     uses the weightedActivityPercent added in 0a7a18f/7ae617d (measured earned/boq + lumpsum
- *     cumulative %). The money in that budget-vs-actual result is DISCARDED here; only physicalPercent
- *     crosses the project boundary.
- *   - the asset → activity structure is a light active-only query (labels + BOQ, no cost).
+ *   - each cell % and the weighted total per placement come from loadBudgetVsActual (actuals.server),
+ *     which uses the weightedActivityPercent added in 0a7a18f/7ae617d. The total column is exactly
+ *     that activity's physicalPercent — it CANNOT differ from the panel figure, both read this map.
+ *     The money in that budget-vs-actual result is DISCARDED; no cost crosses into the matrix.
  *
- * Asset physical % is the UNWEIGHTED MEAN of its active activities' physical %s. That is the only
- * money-free aggregation available below project level — a value- or BOQ-weighted mean would need a
- * cost figure or a common unit across activities, and neither is permitted here — and it is
- * consistent with how the project physical % is itself the mean of activity %s.
+ * GROUPING: an "activity" spans assets — the same activity (by name) placed on several assets becomes
+ * one table with a row per asset. Its sub-activities are snapshotted per placement, so different
+ * assets may carry different subs (a SPARSE grid). Columns are the UNION of the non-implicit subs by
+ * name (implicit lines never surface); a sub absent from an asset's placement is a null cell that the
+ * UI renders as a dash — distinct from a real 0%.
+ *
+ * RECENT PROGRESS: a cell rising in the last 7 days is flagged with its delta. There is no existing
+ * as-of helper, so the 7-days-ago baseline is computed here: each sub's cumulative % from APPROVED
+ * reports dated BEFORE cutoff = UTC-midnight(today) − 7 days (measured: cumulativePercent(Σ earned);
+ * lumpsum: latest approved %). delta = current − baseline; flagged only when it increased.
  *
  * Inactive assets and activities are excluded.
  */
 
-export interface OverviewActivity {
-  ref: string | null
+export interface MatrixColumn {
+  key: string // sub-activity name — the column identity across placements
   name: string
-  unit: string | null
-  boqQuantity: number
-  physicalPercent: number
+  type: 'MEASURED' | 'LUMPSUM'
+  weightPct: number // resolved weight from the shared resolver (read-only here)
 }
-export interface OverviewAsset {
+export interface MatrixCell {
+  percent: number
+  delta: number | null // increase over the last 7 days; null = did not rise
+}
+export interface MatrixRow {
+  assetId: string
+  assetName: string
+  assetRef: string | null
+  boqQuantity: number
+  unit: string | null
+  cells: (MatrixCell | null)[] // aligned to columns; null = sub not in this asset's scope (absent)
+  totalPercent: number // the placement's weighted physical % (reused, not recomputed)
+  totalDelta: number | null
+}
+export interface ActivityMatrix {
+  key: string
   name: string
   ref: string | null
-  physicalPercent: number
-  activities: OverviewActivity[]
+  columns: MatrixColumn[]
+  rows: MatrixRow[]
 }
 export interface ProjectOverview {
   project: {
@@ -51,45 +72,106 @@ export interface ProjectOverview {
     physicalPercent: number // weighted physical progress (mean of activity %s)
     valuePercent: number // EV / BAC × 100 — value-weighted completion
   }
-  assets: OverviewAsset[]
+  matrix: ActivityMatrix[]
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10
+const DELTA_TOL = 0.05
 
 export async function loadProjectOverview(projectId: string): Promise<ProjectOverview | null> {
-  const [project, evm, bva, assetRows] = await Promise.all([
+  // 7-days-ago cutoff (UTC date boundary). Reports dated on/after this moved a cell "recently".
+  const now = new Date()
+  const cutoff = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 7))
+
+  const [project, evm, bva, assetRefs, baselineRows] = await Promise.all([
     prisma.project.findUnique({ where: { id: projectId }, select: { name: true, projectCode: true } }),
     loadProjectEvm(projectId),
     loadBudgetVsActual(projectId),
-    prisma.asset.findMany({
-      where: { projectId, isActive: true },
-      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-      select: {
-        id: true, ref: true, name: true,
-        activities: {
-          where: { isActive: true },
-          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-          select: { id: true, ref: true, name: true, unit: true, boqQuantity: true },
-        },
-      },
+    prisma.asset.findMany({ where: { projectId, isActive: true }, select: { id: true, ref: true } }),
+    // Per-sub progress AS OF the cutoff — the only genuinely new computation (no as-of helper exists).
+    prisma.reportSubActivity.findMany({
+      where: { reportActivity: { report: { projectId, status: 'APPROVED', reportDate: { lt: cutoff } } } },
+      orderBy: [{ reportActivity: { report: { reportDate: 'desc' } } }, { id: 'desc' }],
+      select: { subActivityId: true, quantityDone: true, percentComplete: true },
     }),
   ])
   if (!project || !evm) return null
 
-  // Weighted physical % per activity, taken from the reused budget-vs-actual result (money dropped).
-  const pctByActivity = new Map<string, number>()
-  for (const a of bva?.assets ?? []) for (const act of a.activities) pctByActivity.set(act.activityId, act.physicalPercent)
+  const refByAsset = new Map(assetRefs.map((a) => [a.id, a.ref]))
 
-  const assets: OverviewAsset[] = assetRows.map((asset) => {
-    const activities: OverviewActivity[] = asset.activities.map((act) => ({
-      ref: act.ref,
-      name: act.name,
-      unit: act.unit,
-      boqQuantity: Number(act.boqQuantity),
-      physicalPercent: pctByActivity.get(act.id) ?? 0,
-    }))
-    const physicalPercent = activities.length > 0 ? round1(activities.reduce((s, a) => s + a.physicalPercent, 0) / activities.length) : 0
-    return { name: asset.name, ref: asset.ref, physicalPercent, activities }
+  // Baseline accumulators: measured Σ earned before cutoff; lumpsum latest % before cutoff (rows desc).
+  const baseEarnedBySub = new Map<string, number>()
+  const baseLatestPctBySub = new Map<string, number>()
+  for (const r of baselineRows) {
+    if (r.quantityDone != null) baseEarnedBySub.set(r.subActivityId, (baseEarnedBySub.get(r.subActivityId) ?? 0) + Number(r.quantityDone))
+    if (r.percentComplete != null && !baseLatestPctBySub.has(r.subActivityId)) baseLatestPctBySub.set(r.subActivityId, Number(r.percentComplete))
+  }
+  const baselinePct = (sp: SubActivityProgress, boq: number): number =>
+    sp.type === 'MEASURED' ? cumulativePercent(baseEarnedBySub.get(sp.subActivityId) ?? 0, boq) : (baseLatestPctBySub.get(sp.subActivityId) ?? 0)
+
+  // Group activity placements across assets by activity name.
+  interface Placement { assetId: string; assetName: string; assetRef: string | null; boq: number; unit: string | null; total: number; subs: SubActivityProgress[] }
+  const groups = new Map<string, { name: string; ref: string | null; placements: Placement[] }>()
+  for (const asset of bva?.assets ?? []) {
+    for (const act of asset.activities) {
+      let g = groups.get(act.name)
+      if (!g) { g = { name: act.name, ref: act.ref, placements: [] }; groups.set(act.name, g) }
+      if (g.ref == null && act.ref != null) g.ref = act.ref
+      g.placements.push({
+        assetId: asset.assetId,
+        assetName: asset.assetName,
+        assetRef: refByAsset.get(asset.assetId) ?? null,
+        boq: act.boqQuantity,
+        unit: act.unit,
+        total: act.physicalPercent,
+        subs: act.subProgress,
+      })
+    }
+  }
+
+  const matrix: ActivityMatrix[] = [...groups.values()].map((g) => {
+    // Columns = union of non-implicit subs by name, ordered by sortOrder then name. Weight is taken
+    // from the first placement carrying the sub (placements snapshot the same catalogue → they agree).
+    const colByName = new Map<string, { name: string; type: 'MEASURED' | 'LUMPSUM'; weightPct: number; sortOrder: number }>()
+    for (const pl of g.placements) {
+      for (const sp of pl.subs) {
+        if (sp.isImplicit) continue
+        const ex = colByName.get(sp.name)
+        if (!ex) colByName.set(sp.name, { name: sp.name, type: sp.type, weightPct: sp.weightPct, sortOrder: sp.sortOrder })
+        else ex.sortOrder = Math.min(ex.sortOrder, sp.sortOrder)
+      }
+    }
+    const columns: MatrixColumn[] = [...colByName.values()]
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+      .map((c) => ({ key: c.name, name: c.name, type: c.type, weightPct: round1(c.weightPct) }))
+
+    const rows: MatrixRow[] = g.placements.map((pl) => {
+      const subByName = new Map(pl.subs.map((sp) => [sp.name, sp]))
+      const cells: (MatrixCell | null)[] = columns.map((col) => {
+        const sp = subByName.get(col.key)
+        if (!sp) return null // absent from this asset's scope — dash, not zero
+        const rise = sp.percent - baselinePct(sp, pl.boq)
+        return { percent: round1(sp.percent), delta: rise > DELTA_TOL ? round1(rise) : null }
+      })
+      // Total delta: weighted baseline (resolved weights) vs the reused weighted total.
+      const sumW = pl.subs.reduce((s, sp) => s + sp.weightPct, 0)
+      const baseTotal = sumW > 0
+        ? pl.subs.reduce((s, sp) => s + baselinePct(sp, pl.boq) * sp.weightPct, 0) / sumW
+        : (pl.subs.length > 0 ? pl.subs.reduce((s, sp) => s + baselinePct(sp, pl.boq), 0) / pl.subs.length : 0)
+      const totalRise = pl.total - baseTotal
+      return {
+        assetId: pl.assetId,
+        assetName: pl.assetName,
+        assetRef: pl.assetRef,
+        boqQuantity: pl.boq,
+        unit: pl.unit,
+        cells,
+        totalPercent: round1(pl.total),
+        totalDelta: totalRise > DELTA_TOL ? round1(totalRise) : null,
+      }
+    })
+
+    return { key: g.name, name: g.name, ref: g.ref, columns, rows }
   })
 
   return {
@@ -107,6 +189,6 @@ export async function loadProjectOverview(projectId: string): Promise<ProjectOve
       physicalPercent: bva?.totals.physicalPercent ?? 0,
       valuePercent: evm.pctComplete,
     },
-    assets,
+    matrix,
   }
 }

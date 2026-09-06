@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { loadProjectBudget } from '@/lib/budget.server'
 import { cumulativePercent } from '@/lib/reports/rules'
-import { weightedActivityPercent } from '@/lib/progress/weights'
+import { weightedActivityPercent, resolvedWeightMap } from '@/lib/progress/weights'
 import {
   buildMeasuredVariance,
   lumpsumEarned,
@@ -13,6 +13,20 @@ import {
 } from '@/lib/actuals'
 import { round } from '@/lib/budget'
 
+/**
+ * Per-sub-activity cumulative % — the pieces the activity's weighted physical % is built from.
+ * Exposed so callers (the progress matrix) can show the cells AND reuse the one weighted total,
+ * never recomputing either. Carries NO cost — name/type/weight/percent only.
+ */
+export interface SubActivityProgress {
+  subActivityId: string
+  name: string
+  type: 'MEASURED' | 'LUMPSUM'
+  isImplicit: boolean
+  sortOrder: number
+  weightPct: number // RESOLVED weight (shared resolver), sums to ~100 across the activity's subs
+  percent: number // cumulative % complete (measured: earned/boq; lumpsum: latest approved %)
+}
 export interface ActivityBVA {
   activityId: string
   ref: string | null
@@ -21,6 +35,7 @@ export interface ActivityBVA {
   unit: string | null
   boqQuantity: number
   physicalPercent: number
+  subProgress: SubActivityProgress[]
   measured: MeasuredVariance
   lumpsumBudgetBhd: number
   lumpsumEarnedBhd: number
@@ -92,7 +107,11 @@ export async function loadBudgetVsActual(projectId: string): Promise<ProjectBudg
     where: { isActive: true, asset: { projectId, isActive: true } },
     select: {
       id: true, boqQuantity: true,
-      subActivities: { where: { isActive: true }, select: { id: true, type: true, lumpsumBhd: true, weightPct: true } },
+      subActivities: {
+        where: { isActive: true },
+        orderBy: { sortOrder: 'asc' },
+        select: { id: true, name: true, type: true, lumpsumBhd: true, weightPct: true, isImplicit: true, sortOrder: true },
+      },
     },
   })
 
@@ -122,6 +141,7 @@ export async function loadBudgetVsActual(projectId: string): Promise<ProjectBudg
   }
 
   const physicalByActivity = new Map<string, number>()
+  const subProgressByActivity = new Map<string, SubActivityProgress[]>()
   const lumpsumEarnedByActivity = new Map<string, number>()
   for (const a of activities) {
     const boq = Number(a.boqQuantity)
@@ -132,6 +152,17 @@ export async function loadBudgetVsActual(projectId: string): Promise<ProjectBudg
       const subs = a.subActivities.map((s) => ({ id: s.id, type: s.type as 'MEASURED' | 'LUMPSUM', weightPct: s.weightPct == null ? null : Number(s.weightPct) }))
       const pctById = new Map(subs.map((s) => [s.id, s.type === 'MEASURED' ? cumulativePercent(earnedBySub.get(s.id) ?? 0, boq) : (latestPctBySub.get(s.id) ?? 0)]))
       physicalByActivity.set(a.id, round(weightedActivityPercent(subs, pctById), 2))
+      // The per-sub cells + resolved weights the total above is built from (same figures, exposed).
+      const weights = resolvedWeightMap(subs)
+      subProgressByActivity.set(a.id, a.subActivities.map((s) => ({
+        subActivityId: s.id,
+        name: s.name,
+        type: s.type as 'MEASURED' | 'LUMPSUM',
+        isImplicit: s.isImplicit,
+        sortOrder: s.sortOrder,
+        weightPct: round(weights.get(s.id) ?? 0, 3),
+        percent: round(pctById.get(s.id) ?? 0, 2),
+      })))
     }
     if (lumpsumSubs.length > 0) {
       const earned = lumpsumSubs.reduce((sum, s) => sum + lumpsumEarned(latestPctBySub.get(s.id) ?? 0, s.lumpsumBhd ? Number(s.lumpsumBhd) : 0), 0)
@@ -158,6 +189,7 @@ export async function loadBudgetVsActual(projectId: string): Promise<ProjectBudg
         unit: act.unit,
         boqQuantity: act.boqQuantity,
         physicalPercent: physicalByActivity.get(act.activityId) ?? 0,
+        subProgress: subProgressByActivity.get(act.activityId) ?? [],
         measured,
         lumpsumBudgetBhd,
         lumpsumEarnedBhd,
