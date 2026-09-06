@@ -3,6 +3,8 @@ import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { requireAdminPage } from '@/lib/auth/permissions'
 import { ScopeManager, type ScopeAssetData, type CatalogOption, type AddSubInfo, type ScopeSubRow } from '@/components/admin/ScopeManager'
+import { ProjectOverviewPanel } from '@/components/admin/ProjectOverviewPanel'
+import { loadProjectOverview } from '@/lib/projectOverview.server'
 import { BudgetPanel } from '@/components/admin/BudgetPanel'
 import { VariancePanel } from '@/components/admin/VariancePanel'
 import { CostBudgetPanel } from '@/components/admin/CostBudgetPanel'
@@ -46,6 +48,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
     loadProjectMoney(project.id),
     loadProjectCostPerformance(project.id),
   ])
+  const overview = await loadProjectOverview(project.id)
 
   const serialized: ScopeAssetData[] = assets.map((a) => ({
     id: a.id, ref: a.ref, name: a.name, description: a.description, isActive: a.isActive, sortOrder: a.sortOrder,
@@ -119,6 +122,8 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
           </div>
         </div>
       </div>
+
+      {overview && <ProjectOverviewPanel overview={overview} />}
 
       <ScopeManager
         projectId={project.id}
