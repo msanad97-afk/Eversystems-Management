@@ -72,18 +72,32 @@ describe('resolveSubActivityWeights — the shared rule', () => {
   })
 })
 
-describe('weightedActivityPercent — measured physical %', () => {
-  const measured = (id: string, type: 'MEASURED' | 'LUMPSUM', weightPct: number | null) => ({ id, type, weightPct })
+describe('weightedActivityPercent — physical % across measured AND lumpsum subs', () => {
+  const sub = (id: string, type: 'MEASURED' | 'LUMPSUM', weightPct: number | null) => ({ id, type, weightPct })
 
-  it('all-unweighted reduces to the plain mean (no regression for existing null weights)', () => {
-    const subs = [measured('a', 'MEASURED', null), measured('b', 'MEASURED', null), measured('c', 'MEASURED', null)]
-    const pct = new Map([['a', 100], ['b', 50], ['c', 0]])
-    expect(weightedActivityPercent(subs, pct)).toBe(50) // (100+50+0)/3
+  it('measured 100% + lumpsum 100%, equal weights → 100% (not 50%)', () => {
+    const subs = [sub('m', 'MEASURED', null), sub('l', 'LUMPSUM', null)]
+    expect(weightedActivityPercent(subs, new Map([['m', 100], ['l', 100]]))).toBe(100)
   })
 
-  it('weights shift the activity percent (70/30 over two measured subs)', () => {
-    const subs = [measured('a', 'MEASURED', 70), measured('b', 'MEASURED', 30)]
-    const pct = new Map([['a', 100], ['b', 0]])
-    expect(weightedActivityPercent(subs, pct)).toBe(70) // vs 50 unweighted
+  it('measured 100%, lumpsum 0%, equal weights → 50%', () => {
+    const subs = [sub('m', 'MEASURED', null), sub('l', 'LUMPSUM', null)]
+    expect(weightedActivityPercent(subs, new Map([['m', 100], ['l', 0]]))).toBe(50)
+  })
+
+  it('weighted 70/30 with measured 100% and lumpsum 50% → 85%', () => {
+    const subs = [sub('m', 'MEASURED', 70), sub('l', 'LUMPSUM', 30)]
+    expect(weightedActivityPercent(subs, new Map([['m', 100], ['l', 50]]))).toBe(85)
+  })
+
+  it('only measured subs is unchanged (all-unweighted → plain mean)', () => {
+    const subs = [sub('a', 'MEASURED', null), sub('b', 'MEASURED', null), sub('c', 'MEASURED', null)]
+    expect(weightedActivityPercent(subs, new Map([['a', 100], ['b', 50], ['c', 0]]))).toBe(50)
+    // and weighted the same as 0a7a18f
+    expect(weightedActivityPercent([sub('a', 'MEASURED', 70), sub('b', 'MEASURED', 30)], new Map([['a', 100], ['b', 0]]))).toBe(70)
+  })
+
+  it('only a lumpsum sub reads that sub’s percent', () => {
+    expect(weightedActivityPercent([sub('l', 'LUMPSUM', null)], new Map([['l', 60]]))).toBe(60)
   })
 })

@@ -87,21 +87,20 @@ export function resolvedWeightMap(subs: WeightInput[]): Map<string, number> {
 }
 
 /**
- * Weighted physical % for one activity over its MEASURED sub-activities. Weights are resolved over
- * ALL the active subs passed (measured + lumpsum both carry weight), then the measured subs'
- * percentages are combined in proportion to their resolved weights — normalised by the measured
- * weight total, so physical % stays a measured-only figure (a lumpsum's completion is tracked as
- * earned value, not folded into physical progress). All-unweighted reduces to the old plain mean.
+ * Weighted physical % for one activity over ALL its active sub-activities. Every sub contributes:
+ * a measured sub its cumulativePercent(earned, boq), a lumpsum sub its latest approved cumulative
+ * percentComplete — both supplied by the caller in `pctById` (reuse the existing figures; do not
+ * compute a second one). Since every sub can now contribute, the resolved weights need no
+ * normalising over a subset. All-unweighted reduces to the plain mean.
  */
 export function weightedActivityPercent(
   subs: { id: string; type: 'MEASURED' | 'LUMPSUM'; weightPct: number | null }[],
-  measuredPct: Map<string, number>,
+  pctById: Map<string, number>,
 ): number {
+  if (subs.length === 0) return 0
   const weights = resolvedWeightMap(subs)
-  const measured = subs.filter((s) => s.type === 'MEASURED')
-  if (measured.length === 0) return 0
-  const sumW = measured.reduce((a, s) => a + (weights.get(s.id) ?? 0), 0)
-  if (sumW <= 0) return r3(measured.reduce((a, s) => a + (measuredPct.get(s.id) ?? 0), 0) / measured.length)
-  const num = measured.reduce((a, s) => a + (measuredPct.get(s.id) ?? 0) * (weights.get(s.id) ?? 0), 0)
+  const sumW = subs.reduce((a, s) => a + (weights.get(s.id) ?? 0), 0)
+  if (sumW <= 0) return r3(subs.reduce((a, s) => a + (pctById.get(s.id) ?? 0), 0) / subs.length)
+  const num = subs.reduce((a, s) => a + (pctById.get(s.id) ?? 0) * (weights.get(s.id) ?? 0), 0)
   return r3(num / sumW)
 }

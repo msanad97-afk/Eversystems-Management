@@ -125,13 +125,13 @@ export async function loadBudgetVsActual(projectId: string): Promise<ProjectBudg
   const lumpsumEarnedByActivity = new Map<string, number>()
   for (const a of activities) {
     const boq = Number(a.boqQuantity)
-    const measuredSubs = a.subActivities.filter((s) => s.type === 'MEASURED')
     const lumpsumSubs = a.subActivities.filter((s) => s.type === 'LUMPSUM')
-    if (measuredSubs.length > 0) {
-      // WEIGHTED sum of the measured subs' %s using the resolved weights (was the unweighted mean).
+    if (a.subActivities.length > 0) {
+      // WEIGHTED sum of ALL the subs' %s (was measured-only mean). Measured = earned/boq; lumpsum =
+      // its latest approved cumulative % (already in latestPctBySub — reused, not recomputed).
       const subs = a.subActivities.map((s) => ({ id: s.id, type: s.type as 'MEASURED' | 'LUMPSUM', weightPct: s.weightPct == null ? null : Number(s.weightPct) }))
-      const measuredPct = new Map(measuredSubs.map((s) => [s.id, cumulativePercent(earnedBySub.get(s.id) ?? 0, boq)]))
-      physicalByActivity.set(a.id, round(weightedActivityPercent(subs, measuredPct), 2))
+      const pctById = new Map(subs.map((s) => [s.id, s.type === 'MEASURED' ? cumulativePercent(earnedBySub.get(s.id) ?? 0, boq) : (latestPctBySub.get(s.id) ?? 0)]))
+      physicalByActivity.set(a.id, round(weightedActivityPercent(subs, pctById), 2))
     }
     if (lumpsumSubs.length > 0) {
       const earned = lumpsumSubs.reduce((sum, s) => sum + lumpsumEarned(latestPctBySub.get(s.id) ?? 0, s.lumpsumBhd ? Number(s.lumpsumBhd) : 0), 0)

@@ -85,16 +85,18 @@ describe('loadBudgetVsActual — reconcile', () => {
     expect(cement.consumedPct).toBe(80)
     expect(cement.light).toBe('green')
 
-    // Lumpsum earned = 40% × 2500 = 1000 (latest APPROVED %); physical % = base coat 300/1000 = 30.
+    // Lumpsum earned = 40% × 2500 = 1000 (latest APPROVED %).
+    // Physical % now counts the lumpsum sub too: equal-weighted mean of base coat 300/1000 = 30%
+    // and scaffolding 40% → (30 + 40) / 2 = 35 (was 30 when only measured subs counted).
     expect(act.lumpsumBudgetBhd).toBe(2500)
     expect(act.lumpsumEarnedBhd).toBe(1000)
-    expect(act.physicalPercent).toBe(30)
+    expect(act.physicalPercent).toBe(35)
   })
 
   it('project totals mirror the single activity (drafts/submitted excluded)', async () => {
     const bva = (await loadBudgetVsActual(ids.projectId!))!
     expect(bva.totals.labour.find((l) => l.name === 'Mason')!.actual).toBe(300)
     expect(bva.totals.lumpsumEarnedBhd).toBe(1000)
-    expect(bva.totals.physicalPercent).toBe(30)
+    expect(bva.totals.physicalPercent).toBe(35) // mean of the single activity's 35% (lumpsum now counts)
   })
 })

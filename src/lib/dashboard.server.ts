@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { weightedActivityPercent } from '@/lib/progress/weights'
+import { lumpsumFloorBySubActivity } from '@/lib/reports/progress'
 import {
   aggregateDashboard,
   aggregateProgress,
@@ -158,16 +159,21 @@ export async function loadDashboard(input: {
       })
     : []
   const earnedBySub = new Map(earnedRows.map((r) => [r.subActivityId, Number(r._sum.quantityDone ?? 0)]))
+  // Lumpsum subs contribute their latest APPROVED cumulative % — the same figure EV and the report
+  // view use (reused, not recomputed). No date cutoff on this source (see note in the task report).
+  const lumpsumIds = assetsForProgress.flatMap((a) => a.activities.flatMap((x) => x.subActivities.filter((s) => s.type === 'LUMPSUM').map((s) => s.id)))
+  const lumpsumPctBySub = await lumpsumFloorBySubActivity(lumpsumIds)
   const projMeta = new Map(activeProjects.map((p) => [p.id, p]))
   const progressRows: ProgressRow[] = assetsForProgress.flatMap((asset) =>
     asset.activities
-      .filter((act) => act.subActivities.some((s) => s.type === 'MEASURED'))
+      .filter((act) => act.subActivities.length > 0)
       .map((act) => {
         const boq = Number(act.boqQuantity)
         const subs = act.subActivities.map((s) => ({ id: s.id, type: s.type as 'MEASURED' | 'LUMPSUM', weightPct: s.weightPct == null ? null : Number(s.weightPct) }))
-        const measuredPct = new Map(subs.filter((s) => s.type === 'MEASURED').map((s) => [s.id, boq > 0 ? Math.min(100, ((earnedBySub.get(s.id) ?? 0) / boq) * 100) : 0]))
-        // WEIGHTED sum of the measured subs' %s using the resolved weights (was the unweighted mean).
-        const meanPct = weightedActivityPercent(subs, measuredPct)
+        // Each active sub's %: measured = earned/boq (capped); lumpsum = latest approved cumulative %.
+        const pctById = new Map(subs.map((s) => [s.id, s.type === 'MEASURED' ? (boq > 0 ? Math.min(100, ((earnedBySub.get(s.id) ?? 0) / boq) * 100) : 0) : (lumpsumPctBySub.get(s.id) ?? 0)]))
+        // WEIGHTED sum of ALL the subs' %s using the resolved weights (was the unweighted mean).
+        const meanPct = weightedActivityPercent(subs, pctById)
         return {
           projectId: asset.projectId,
           projectCode: projMeta.get(asset.projectId)?.projectCode ?? '',
