@@ -119,6 +119,12 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
             >
               Performance (EVM) →
             </Link>
+            <Link
+              href={`/admin/projects/${project.id}/opening-report`}
+              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-primary-700 hover:bg-surface-muted"
+            >
+              Opening balance →
+            </Link>
           </div>
         </div>
       </div>

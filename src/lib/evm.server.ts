@@ -152,7 +152,7 @@ export interface ProgressRow {
   cost: number
 }
 
-/** Approved progress + snapshot cost, dated by reportDate. One query. */
+/** Approved progress + snapshot cost, dated by reportDate. */
 export async function loadApprovedProgress(projectId: string, asOf: Date): Promise<ProgressRow[]> {
   const rows = await prisma.reportSubActivity.findMany({
     where: {
@@ -167,7 +167,7 @@ export async function loadApprovedProgress(projectId: string, asOf: Date): Promi
       materials: { select: { costAtApproval: true } },
     },
   })
-  return rows.map((r) => ({
+  const progress: ProgressRow[] = rows.map((r) => ({
     subActivityId: r.subActivityId,
     reportDate: r.reportActivity.report.reportDate,
     quantityDone: r.quantityDone == null ? null : Number(r.quantityDone),
@@ -178,6 +178,24 @@ export async function loadApprovedProgress(projectId: string, asOf: Date): Promi
       MONEY_DP,
     ),
   }))
+
+  // Activity-level direct labour cost (opening balance): AC without hours. Read as any labour cost —
+  // never as an opening flag — and attributed to the activity's first active sub so it lands in the
+  // right asset's roll-up. It carries no quantity/percent, so it moves AC only, never EV.
+  const openingRows = await prisma.reportActivity.findMany({
+    where: { openingLabourCost: { not: null }, report: { projectId, status: 'APPROVED', reportDate: { lte: asOf } } },
+    select: {
+      openingLabourCost: true,
+      report: { select: { reportDate: true } },
+      activity: { select: { subActivities: { where: { isActive: true }, orderBy: { sortOrder: 'asc' }, take: 1, select: { id: true } } } },
+    },
+  })
+  for (const o of openingRows) {
+    const sub = o.activity.subActivities[0]
+    if (!sub) continue
+    progress.push({ subActivityId: sub.id, reportDate: o.report.reportDate, quantityDone: null, percentComplete: null, cost: round(Number(o.openingLabourCost), MONEY_DP) })
+  }
+  return progress
 }
 
 /** EV and AC per sub-activity as of a cut-off, from already-loaded rows. */

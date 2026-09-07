@@ -67,6 +67,7 @@ enum AuditAction {
   REPORT_APPROVED
   REPORT_REJECTED
   REPORT_UPDATED
+  OPENING_REPORT_CREATED
   CATALOG_UPDATED
   ASSET_CREATED
   ASSET_UPDATED
@@ -356,6 +357,10 @@ model DailyReport {
   // backfill action (priced at then-current rates, not at approval time). Any actual cost
   // derived from such a report is an APPROXIMATION and must be labelled as one everywhere.
   costBackfilledAt DateTime?
+  // Opening-balance report: a NORMAL report carrying pre-go-live progress/cost/consumption, dated at
+  // the project start date. Just a flag — no loader branches on it; every calculation reads it as any
+  // other approved report. At most one APPROVED opening report per project (enforced in the route).
+  isOpeningBalance Boolean      @default(false)
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
@@ -510,6 +515,10 @@ model ReportActivity {
   activityId String
   note       String? // optional activity-level note
   sortOrder  Int     @default(0)
+  // Opening-balance only: the direct labour cost spent on this activity before go-live, entered as
+  // money with NO hours behind it (so it is never a ManpowerEntry). It reaches Actual Cost / AC like
+  // any labour cost but is surfaced distinctly — money without man-hours. Null on every normal report.
+  openingLabourCost Decimal? @db.Decimal(18, 3)
 
   report        DailyReport         @relation(fields: [reportId], references: [id], onDelete: Cascade)
   activity      Activity            @relation(fields: [activityId], references: [id])

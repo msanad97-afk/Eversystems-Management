@@ -50,6 +50,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       reportCode: report.reportCode,
       reportDate: report.reportDate.toISOString().slice(0, 10),
       status: report.status,
+      isOpeningBalance: report.isOpeningBalance,
       weather: report.weather,
       generalNotes: report.generalNotes,
       editable: canAuthorReport(scope, report) && canEdit(report.status),
@@ -57,6 +58,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
         activityId: ra.activityId,
         activityName: ra.activity.name,
         assetName: ra.activity.asset.name,
+        openingLabourCost: ra.openingLabourCost == null ? null : Number(ra.openingLabourCost),
         subActivities: ra.subActivities.map((rs) => ({
           subActivityId: rs.subActivityId,
           name: rs.subActivity.name,
@@ -88,7 +90,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const report = await prisma.dailyReport.findUnique({
     where: { id: params.id },
-    select: { id: true, authorId: true, projectId: true, status: true, reportCode: true },
+    select: { id: true, authorId: true, projectId: true, status: true, reportCode: true, isOpeningBalance: true },
   })
   if (!report) return NextResponse.json({ error: 'Report not found.' }, { status: 404 })
 
@@ -179,6 +181,26 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const capError = validateSubActivities(capInputs)
   if (capError) return NextResponse.json({ error: capError }, { status: 400 })
 
+  // Opening-balance only: a direct per-activity labour cost (money, no hours). Ignored on any normal
+  // report, so a supervisor's save can never introduce cost — the money wall holds.
+  const openingByActivity = new Map<string, number>()
+  if (report.isOpeningBalance && Array.isArray(body.openingLabour)) {
+    for (const o of body.openingLabour as unknown[]) {
+      if (!isRecord(o) || typeof o.activityId !== 'string') continue
+      const cost = num(o.cost)
+      if (cost < 0) return NextResponse.json({ error: 'Opening labour cost cannot be negative.' }, { status: 400 })
+      if (cost > 0) openingByActivity.set(o.activityId, cost)
+    }
+    // Every activity carrying opening labour must belong to this project (may have no progress subs).
+    const openingIds = [...openingByActivity.keys()]
+    if (openingIds.length > 0) {
+      const okActs = await prisma.activity.findMany({ where: { id: { in: openingIds } }, select: { id: true, asset: { select: { projectId: true } } } })
+      if (okActs.length !== openingIds.length || okActs.some((a) => a.asset.projectId !== report.projectId)) {
+        return NextResponse.json({ error: 'Unknown activity for opening labour.' }, { status: 400 })
+      }
+    }
+  }
+
   // Group sub-activities under their parent activity (ReportActivity is the group).
   const byActivity = new Map<string, ParsedSub[]>()
   for (const s of parsed) {
@@ -187,6 +209,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     list.push(s)
     byActivity.set(actId, list)
   }
+  // An activity can appear because it has progress, opening labour, or both.
+  const allActivityIds = [...new Set<string>([...byActivity.keys(), ...openingByActivity.keys()])]
 
   await prisma.$transaction(async (tx) => {
     await tx.reportActivity.deleteMany({ where: { reportId: report.id } })
@@ -196,11 +220,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         weather,
         generalNotes,
         activities: {
-          create: [...byActivity.entries()].map(([activityId, list], ai) => ({
+          create: allActivityIds.map((activityId, ai) => ({
             activityId,
             sortOrder: ai,
+            openingLabourCost: openingByActivity.get(activityId) ?? null,
             subActivities: {
-              create: list.map((s, si) => {
+              create: (byActivity.get(activityId) ?? []).map((s, si) => {
                 const isLumpsum = meta.get(s.subActivityId)!.type === 'LUMPSUM'
                 return {
                   subActivityId: s.subActivityId,

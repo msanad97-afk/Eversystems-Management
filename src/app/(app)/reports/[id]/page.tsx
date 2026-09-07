@@ -24,6 +24,11 @@ export default async function ReportPage({ params }: { params: { id: string } })
   const user = await getSessionUser()
   if (!user) redirect('/login')
 
+  // Opening-balance reports have their own admin-only editor (labour as cost with no hours, the 100%
+  // shortcut). Send them there rather than rendering the hours-based daily-report form.
+  const flag = await prisma.dailyReport.findUnique({ where: { id: params.id }, select: { isOpeningBalance: true, projectId: true } })
+  if (flag?.isOpeningBalance) redirect(`/admin/projects/${flag.projectId}/opening-report`)
+
   const report = await prisma.dailyReport.findUnique({
     where: { id: params.id },
     include: {

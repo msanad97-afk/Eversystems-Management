@@ -61,6 +61,15 @@ export function ActualCostPanel({ cost, projectId }: { cost: ProjectCostPerforma
         </div>
       )}
 
+      {/* Opening-balance labour is money without hours — it must never read as measured cost. */}
+      {cost.hasOpeningLabour && (
+        <div className="rounded-lg border border-border bg-surface-subtle px-4 py-3 text-sm text-fg">
+          <span className="font-semibold">BHD {bhd(cost.openingLabourCost)} of labour is an OPENING BALANCE</span> carried from before go-live —
+          a direct cost with <span className="font-semibold">no man-hours behind it</span>. It is in actual cost so CPI is right, but cumulative
+          man-hours for this project are understated by the pre-go-live period. Rows below are marked <Badge tone="neutral">opening</Badge>.
+        </div>
+      )}
+
       {nothing ? (
         <EmptyState title="No actual cost yet" description="Approve a daily report, or record a project expense, to build actual cost." />
       ) : (
@@ -100,9 +109,10 @@ export function ActualCostPanel({ cost, projectId }: { cost: ProjectCostPerforma
                       {a.ref ? `${a.ref} · ` : ''}{a.name}
                       <span className="text-xs text-fg-subtle"> · {a.assetName}</span>
                       {a.approximated && <Badge tone="warning" className="ml-2">approx</Badge>}
+                      {a.openingLabourCost > 0 && <Badge tone="neutral" className="ml-2">opening</Badge>}
                     </TD>
                     <TD className="text-right tabular-nums">{bhd(a.budgetCost)}</TD>
-                    <TD className="text-right tabular-nums">{bhd(a.labourCost)}</TD>
+                    <TD className="text-right tabular-nums">{bhd(a.labourCost)}{a.openingLabourCost > 0 && <span className="block text-xs text-fg-subtle">incl. {bhd(a.openingLabourCost)} opening</span>}</TD>
                     <TD className="text-right tabular-nums">{bhd(a.materialCost)}</TD>
                     <TD className="text-right tabular-nums">{bhd(a.actualCost)}</TD>
                     <TD className={`text-right tabular-nums ${TEXT[a.light]}`}>{a.consumedPct == null ? '—' : `${a.consumedPct}%`}</TD>

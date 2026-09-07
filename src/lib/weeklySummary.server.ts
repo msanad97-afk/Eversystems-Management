@@ -63,6 +63,7 @@ export interface WeeklyProjectPage {
   hadActivityThisWeek: boolean
   manHoursWeek: number
   manHoursCumulative: number
+  hasOpeningBalance: boolean // an approved opening report exists → cumulative man-hours are understated
   deliveriesWeek: number
   certifiedToDate: number
   outstandingReceivables: number
@@ -173,14 +174,17 @@ export async function loadWeeklySummary(opts: { instant?: Date } = {}): Promise<
   const { start, end } = week
   const generatedAt = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Bahrain', dateStyle: 'medium', timeStyle: 'short' })
 
-  const [activeProjects, cash, receivables, openAlerts, weekReports] = await Promise.all([
+  const [activeProjects, cash, receivables, openAlerts, weekReports, openingReports] = await Promise.all([
     prisma.project.findMany({ where: { status: 'ACTIVE' }, orderBy: { projectCode: 'asc' }, select: { id: true, name: true, projectCode: true } }),
     loadCashPosition(),
     loadReceivables({ today: end }),
     loadOpenAlerts(),
     // Any-status counts as filed (matches the daily missing-report sweep).
     prisma.dailyReport.findMany({ where: { reportDate: { gte: start, lte: end }, project: { status: 'ACTIVE' } }, select: { projectId: true, reportDate: true } }),
+    // Projects whose cumulative man-hours are understated by an approved opening balance.
+    prisma.dailyReport.findMany({ where: { isOpeningBalance: true, status: 'APPROVED', project: { status: 'ACTIVE' } }, select: { projectId: true }, distinct: ['projectId'] }),
   ])
+  const openingBalanceProjects = new Set(openingReports.map((r) => r.projectId))
 
   // Outstanding receivables (money still to collect) per project + total.
   const outstandingByProject = new Map<string, number>()
@@ -241,6 +245,7 @@ export async function loadWeeklySummary(opts: { instant?: Date } = {}): Promise<
       hadActivityThisWeek: mv.anyEarnedInWeek || ops.manHoursWeek > 0 || ops.deliveriesWeek > 0,
       manHoursWeek: ops.manHoursWeek,
       manHoursCumulative: ops.manHoursCumulative,
+      hasOpeningBalance: openingBalanceProjects.has(p.id),
       deliveriesWeek: ops.deliveriesWeek,
       certifiedToDate: round(certifiedToDate, 3),
       outstandingReceivables: outstandingByProject.get(p.id) ?? 0,

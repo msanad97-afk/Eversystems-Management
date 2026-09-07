@@ -203,7 +203,7 @@ function ProjectPage({ page, data }: { page: WeeklyProjectPage; data: WeeklySumm
         <Tile label="Physical % complete" value={pct1(page.physicalPercent)} sub="weighted progress" />
         <Tile label="Value % complete" value={pct1(page.valuePercent)} sub="EV ÷ BAC" />
         <Tile label="Movement this week" value={signed(page.movement)} sub="physical %, this week" />
-        <Tile label="Man-hours (week)" value={`${page.manHoursWeek}`} sub={`cumulative ${page.manHoursCumulative}`} />
+        <Tile label="Man-hours (week)" value={`${page.manHoursWeek}`} sub={page.hasOpeningBalance ? `cumulative ${page.manHoursCumulative} — understated (opening balance)` : `cumulative ${page.manHoursCumulative}`} />
         <Tile label="Deliveries (week)" value={`${page.deliveriesWeek}`} sub="received this week" />
         <Tile label="Certified to date" value={bhd0(page.certifiedToDate)} sub={`outstanding ${bhd0(page.outstandingReceivables)}`} />
         <Tile label="Open alerts" value={`${page.openAlerts}`} sub="inventory alerts" />
