@@ -21,7 +21,7 @@ import { sendMail, type MailAttachment } from '@/lib/email/transport'
 // manually sendable documents (see documents.server.ts). VALUATION and REPORT_MISSING are Phase B-2
 // event notifications that carry no downloadable document, so they never go through the manual
 // resolver — they only ever appear here as a recorded-send label.
-export type EmailEntityType = 'DAILY_REPORT' | 'MATERIAL_REQUEST' | 'VALUATION' | 'REPORT_MISSING'
+export type EmailEntityType = 'DAILY_REPORT' | 'MATERIAL_REQUEST' | 'VALUATION' | 'REPORT_MISSING' | 'WEEKLY_SUMMARY'
 
 export interface RecordedRecipient {
   address: string

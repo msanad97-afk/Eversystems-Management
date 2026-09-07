@@ -27,6 +27,22 @@ export default async function NotificationsPage() {
         <h1 className="text-xl font-semibold text-fg">Notification lists</h1>
         <p className="mt-1 text-sm text-fg-muted">Global distribution lists for automatic emails. Add an app user or type an address.</p>
       </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface p-4">
+        <div>
+          <p className="text-sm font-medium text-fg">Weekly summary</p>
+          <p className="text-xs text-fg-muted">Sent to the list every Sunday 08:00 (Bahrain). Generate this week&apos;s document now to check it — download only, no email.</p>
+        </div>
+        <a
+          href="/api/admin/weekly-summary"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-primary-700 hover:bg-surface-muted"
+        >
+          Download this week&apos;s summary
+        </a>
+      </div>
+
       <NotificationListsManager sections={sections} candidates={candidates} />
     </div>
   )

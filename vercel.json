@@ -1,6 +1,7 @@
 {
   "regions": ["fra1"],
   "crons": [
-    { "path": "/api/cron/missing-reports", "schedule": "0 17 * * *" }
+    { "path": "/api/cron/missing-reports", "schedule": "0 17 * * *" },
+    { "path": "/api/cron/weekly-summary", "schedule": "0 5 * * 0" }
   ]
 }

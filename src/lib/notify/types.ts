@@ -11,5 +11,5 @@ export function isNotificationType(v: unknown): v is NotificationType {
 export const NOTIFICATION_TYPE_INFO: Record<NotificationType, { label: string; description: string }> = {
   VALUATION_CERTIFIED: { label: 'Valuation certified', description: 'Emailed a summary whenever an interim payment certificate is certified.' },
   REPORT_MISSING: { label: 'No report filed', description: 'Emailed at 20:00 Bahrain time when an active project has filed no daily report that day.' },
-  WEEKLY_SUMMARY: { label: 'Weekly summary', description: 'Reserved for the weekly project summary (Phase C) — not sent yet.' },
+  WEEKLY_SUMMARY: { label: 'Weekly summary', description: 'Emailed the portfolio + per-project summary PDF every Sunday 08:00 Bahrain, covering the week just ended.' },
 }
