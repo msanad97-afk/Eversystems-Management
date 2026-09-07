@@ -3,13 +3,16 @@ import { notFound } from 'next/navigation'
 import { requireAdminPage } from '@/lib/auth/permissions'
 import { prisma } from '@/lib/prisma'
 import { loadFormScope } from '@/lib/reports/progress'
-import { openingReportDateError } from '@/lib/reports/opening'
+import { openingReportDateError, defaultOpeningDate } from '@/lib/reports/opening'
+import { earliestReportDate } from '@/lib/reports/opening.server'
+import { addDays } from '@/lib/datetime'
 import { OpeningReportEditor, type OpeningScopeActivity } from '@/components/reports/OpeningReportEditor'
 import { CreateOpeningReport } from '@/components/reports/CreateOpeningReport'
 
 export const dynamic = 'force-dynamic'
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000
+const iso = (d: Date) => d.toISOString().slice(0, 10)
 
 export default async function OpeningReportPage({ params }: { params: { id: string } }) {
   await requireAdminPage()
@@ -37,9 +40,15 @@ export default async function OpeningReportPage({ params }: { params: { id: stri
     <div>
       <Link href={`/admin/projects/${project.id}`} className="text-sm font-medium text-primary-700 hover:underline">← {project.name}</Link>
       <h1 className="mt-1 text-xl font-semibold text-fg">Opening balance</h1>
-      <p className="text-sm text-fg-subtle">Work executed before go-live, dated at the project start date. A normal report carrying a flag — it feeds EVM, the matrix, valuations and inventory like any approved report.</p>
+      <p className="text-sm text-fg-subtle">Work executed before go-live. A normal report carrying a flag — it feeds EVM, the matrix, valuations and inventory like any approved report.</p>
     </div>
   )
+
+  // Date bounds: on/after the project start date, strictly before the earliest recorded report (so the
+  // opening balance sits immediately behind the history with no gap). Default = the day before it.
+  const earliest = await earliestReportDate(project.id, existing?.id)
+  const startStr = project.startDate ? iso(project.startDate) : null
+  const maxStr = earliest ? iso(addDays(earliest, -1)) : null
 
   // No opening report yet → offer to create it (blocked if there is no start date to date it at).
   if (!existing) {
@@ -50,10 +59,7 @@ export default async function OpeningReportPage({ params }: { params: { id: stri
         {dateError ? (
           <div className="rounded-lg border border-warning bg-warning-bg px-4 py-3 text-sm text-warning">{dateError}</div>
         ) : (
-          <div className="rounded-lg border border-border bg-surface p-4 text-sm">
-            <p className="text-fg">This will create a DRAFT opening report dated <span className="font-semibold">{project.startDate!.toISOString().slice(0, 10)}</span>. You can edit it freely, then submit and approve to commit it.</p>
-            <div className="mt-3"><CreateOpeningReport projectId={project.id} /></div>
-          </div>
+          <CreateOpeningReport projectId={project.id} defaultDate={iso(defaultOpeningDate(project.startDate!, earliest))} minDate={startStr!} maxDate={maxStr} />
         )}
       </div>
     )
@@ -101,7 +107,7 @@ export default async function OpeningReportPage({ params }: { params: { id: stri
       <div className="rounded-lg border border-border bg-surface-subtle px-4 py-3 text-sm text-fg">
         Labour here is a <span className="font-semibold">direct cost with no man-hours</span>. Cumulative man-hours for this project will be understated by the pre-go-live period — that is expected, and flagged wherever man-hours appear.
       </div>
-      <OpeningReportEditor activities={activities} initial={initial} />
+      <OpeningReportEditor activities={activities} initial={initial} minDate={startStr} maxDate={maxStr} />
     </div>
   )
 }

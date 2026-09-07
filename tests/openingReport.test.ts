@@ -62,7 +62,7 @@ afterAll(async () => {
   await prisma.project.deleteMany({ where: { projectCode: { startsWith: `TOB-` } } })
   await prisma.material.deleteMany({ where: { id: ids.materialId } })
   await prisma.laborCategory.deleteMany({ where: { name: { startsWith: `Mason ${sfx}` } } })
-  await prisma.user.deleteMany({ where: { id: { in: [ids.adminId, ids.supervisorId] } } })
+  await prisma.user.deleteMany({ where: { id: { in: [ids.adminId, ids.supervisorId].filter((x): x is string => Boolean(x)) } } })
   await prisma.$disconnect()
 })
 

@@ -7,6 +7,8 @@ import { getReportScope } from '@/lib/reports/access'
 import { canReadReport, canAuthorReport } from '@/lib/reports/query'
 import { canEdit, validateSubActivities, WEATHER_OPTIONS, type SubActivityInput } from '@/lib/reports/rules'
 import { remainingBySubActivity, lumpsumFloorBySubActivity } from '@/lib/reports/progress'
+import { isNonEmptyString } from '@/lib/validation'
+import { resolveOpeningReportDate } from '@/lib/reports/opening.server'
 
 function num(v: unknown): number {
   const n = Number(v)
@@ -104,6 +106,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const weather =
     typeof body.weather === 'string' && (WEATHER_OPTIONS as readonly string[]).includes(body.weather) ? body.weather : null
   const generalNotes = str(body.generalNotes)
+
+  // Opening reports only: the date is settable while DRAFT (canEdit already blocks anything else).
+  // Resolve/validate a supplied date against its bounds (start-date floor, before the earliest
+  // recorded report) and same-author collisions. Ignored on a normal report.
+  let newReportDate: Date | null = null
+  if (report.isOpeningBalance && isNonEmptyString(body.reportDate)) {
+    const project = await prisma.project.findUnique({ where: { id: report.projectId }, select: { startDate: true } })
+    if (!project?.startDate) return NextResponse.json({ error: 'Set the project start date before dating the opening balance.' }, { status: 400 })
+    const resolved = await resolveOpeningReportDate({ projectId: report.projectId, startDate: project.startDate, authorId: report.authorId, suppliedDateStr: body.reportDate.trim(), excludeReportId: report.id })
+    if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status })
+    newReportDate = resolved.date
+  }
 
   const raw: unknown[] = Array.isArray(body.subActivities) ? body.subActivities : []
   const parsed: ParsedSub[] = raw
@@ -219,6 +233,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       data: {
         weather,
         generalNotes,
+        ...(newReportDate ? { reportDate: newReportDate } : {}),
         activities: {
           create: allActivityIds.map((activityId, ai) => ({
             activityId,

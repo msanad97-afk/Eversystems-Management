@@ -18,10 +18,11 @@ interface Initial {
 
 const nz = (v: string): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0 }
 
-export function OpeningReportEditor({ activities, initial }: { activities: OpeningScopeActivity[]; initial: Initial }) {
+export function OpeningReportEditor({ activities, initial, minDate, maxDate }: { activities: OpeningScopeActivity[]; initial: Initial; minDate: string | null; maxDate: string | null }) {
   const router = useRouter()
   const editable = initial.status === 'DRAFT'
   const entryBySub = new Map(initial.subEntries.map((e) => [e.subActivityId, e]))
+  const [reportDate, setReportDate] = useState(initial.reportDate)
 
   // Per-sub progress value (measured = quantity, lumpsum = %) and per-material quantity.
   const [subVal, setSubVal] = useState<Record<string, string>>(() => {
@@ -75,7 +76,7 @@ export function OpeningReportEditor({ activities, initial }: { activities: Openi
         materials: x.materials,
       }))
     const openingLabour = activities.map((a) => ({ activityId: a.activityId, cost: nz(labour[a.activityId] ?? '') })).filter((o) => o.cost > 0)
-    return { subActivities, openingLabour }
+    return { reportDate, subActivities, openingLabour }
   }
 
   async function save(): Promise<boolean> {
@@ -103,7 +104,17 @@ export function OpeningReportEditor({ activities, initial }: { activities: Openi
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-fg-subtle">{initial.reportCode} · dated {initial.reportDate} · <span className="font-medium text-fg">{initial.status}</span></p>
+        <div className="flex flex-wrap items-center gap-2 text-sm text-fg-subtle">
+          <span>{initial.reportCode} ·</span>
+          {editable ? (
+            <label className="flex items-center gap-1">dated
+              <input type="date" value={reportDate} min={minDate ?? undefined} max={maxDate ?? undefined} onChange={(e) => setReportDate(e.target.value)} className="rounded-md border border-border px-2 py-1 text-sm text-fg" />
+            </label>
+          ) : (
+            <span>dated {initial.reportDate}</span>
+          )}
+          <span>· <span className="font-medium text-fg">{initial.status}</span></span>
+        </div>
         <div className="flex gap-2">
           {editable && <button type="button" onClick={save} disabled={busy} className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-fg hover:bg-surface-muted disabled:opacity-50">Save draft</button>}
           {editable && <button type="button" onClick={saveThenSubmit} disabled={busy} className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-primary-700 hover:bg-surface-muted disabled:opacity-50">Save &amp; submit</button>}

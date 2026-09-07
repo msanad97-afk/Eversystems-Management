@@ -4,15 +4,19 @@ import { requireAdmin } from '@/lib/auth/permissions'
 import { nextCode } from '@/lib/idgen'
 import { writeAuditLog } from '@/lib/audit'
 import { getClientIp } from '@/lib/request'
+import { isNonEmptyString } from '@/lib/validation'
 import { projectHasActiveActivities } from '@/lib/reports/progress'
 import { openingReportDateError } from '@/lib/reports/opening'
+import { resolveOpeningReportDate } from '@/lib/reports/opening.server'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * Create the opening-balance report for a project (ADMIN only — a supervisor never files one). It is
- * a normal DailyReport flagged isOpeningBalance, authored by the admin and dated at Project.startDate,
- * created as DRAFT to be edited/submitted/approved through the ordinary report routes. One per project.
+ * a normal DailyReport flagged isOpeningBalance, authored by the admin, created as DRAFT to be
+ * edited/submitted/approved through the ordinary report routes. One per project. Dated the day before
+ * the earliest recorded report by default (so it sits behind the history), or at an admin-supplied
+ * date validated against its bounds.
  */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdmin()
@@ -41,7 +45,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'This project already has an opening-balance report.', existingId: existingOpening.id }, { status: 409 })
   }
 
-  const reportDate = project.startDate! // non-null (guarded above); stored as @db.Date
+  const body = await req.json().catch(() => null)
+  const suppliedDateStr = isNonEmptyString(body?.reportDate) ? body.reportDate.trim() : null
+  const resolved = await resolveOpeningReportDate({ projectId: project.id, startDate: project.startDate!, authorId: guard.user.id, suppliedDateStr })
+  if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status })
+
+  const reportDate = resolved.date // @db.Date UTC-midnight civil
   const year = reportDate.getUTCFullYear()
 
   let created: { id: string; reportCode: string }
@@ -54,8 +63,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       })
     })
   } catch {
-    // Unique backstop: the admin already authored a report on the start date for this project.
-    return NextResponse.json({ error: 'A report already exists for the project start date. It may already be the opening balance.' }, { status: 409 })
+    // Unique backstop for a race between the collision check and the insert.
+    return NextResponse.json({ error: `A report already exists on ${reportDate.toISOString().slice(0, 10)} for this author — choose a different date.` }, { status: 409 })
   }
 
   writeAuditLog({
