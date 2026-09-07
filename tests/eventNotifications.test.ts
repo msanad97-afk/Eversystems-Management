@@ -11,9 +11,10 @@ vi.mock('@/lib/pdf/render', () => ({
 vi.mock('@/lib/audit', () => ({ writeAuditLog: vi.fn(), recordAuditLog: vi.fn() }))
 
 import { sendMail } from '@/lib/email/transport'
-import { writeAuditLog } from '@/lib/audit'
+import { writeAuditLog, recordAuditLog } from '@/lib/audit'
 import { PrismaClient } from '@prisma/client'
 import { notifyReportRejected, notifyMaterialRequestReviewed, notifyValuationCertified } from '@/lib/notify/events.server'
+import { sendRecordedEmail } from '@/lib/email/send.server'
 
 const prisma = new PrismaClient()
 const sfx = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`
@@ -50,6 +51,13 @@ beforeAll(async () => {
     },
   })
   ids.rejectedReqId = rejected.id
+  const partial = await prisma.materialRequest.create({
+    data: {
+      requestCode: `TNE-MR-P-${sfx}`, projectId: project.id, assetId: asset.id, requestedById: author.id, status: 'PARTIALLY_APPROVED', reviewedById: admin.id, reviewedAt: new Date(),
+      lines: { create: [{ materialId: material.id, unit: 'bag', requestedQty: 10, approvedQty: 5 }] },
+    },
+  })
+  ids.partialReqId = partial.id
 
   // A CERTIFIED valuation (for the certify notification).
   const val = await prisma.valuation.create({
@@ -125,5 +133,100 @@ describe('3. valuation certified → the VALUATION_CERTIFIED list', () => {
     expect(sendMail).not.toHaveBeenCalled()
     const audit = vi.mocked(writeAuditLog).mock.calls.map((c) => c[0]).find((a) => a.action === 'NOTIFICATION_SENT')
     expect(audit?.metadata).toMatchObject({ recipientCount: 0, skipped: 'empty list' })
+  })
+})
+
+// The ACCOUNTS / MATERIAL_REQUEST_MANAGEMENT lists are GLOBAL. Create them only inside a test and
+// delete them in finally, so no concurrent file's material-request review sees them (incident 01/09).
+async function withAccountsLists(fn: () => Promise<void>) {
+  await prisma.notificationRecipient.createMany({ data: [
+    { type: 'ACCOUNTS', address: `accounts_${sfx}@e.local` },
+    { type: 'MATERIAL_REQUEST_MANAGEMENT', address: `mgmt_${sfx}@e.local` },
+  ] })
+  try { await fn() } finally {
+    await prisma.notificationRecipient.deleteMany({ where: { address: { contains: sfx }, type: { in: ['ACCOUNTS', 'MATERIAL_REQUEST_MANAGEMENT'] } } })
+  }
+}
+
+describe('4. material request approved → accounts, cc supervisor + management (one email)', () => {
+  it('an APPROVED request emails accounts, cc supervisor + management, letter attached', async () => {
+    await withAccountsLists(async () => {
+      await notifyMaterialRequestReviewed(ids.approvedReqId!, 'APPROVED', 'Order it.', ids.adminId!)
+      expect(sendMail).toHaveBeenCalledTimes(1) // ONE email, not two
+      const mail = lastMail()
+      expect(mail?.to).toContain(`accounts_${sfx}@e.local`)
+      expect(mail?.cc).toContain(ids.authorEmail) // supervisor copied
+      expect(mail?.cc).toContain(`mgmt_${sfx}@e.local`) // management copied
+      expect(mail?.to).not.toContain(ids.authorEmail) // supervisor is NOT a To
+      expect(mail?.attachments).toHaveLength(1) // procurement letter
+      expect(mail?.subject).toMatch(/purchase authorisation/i) // an order, not an FYI
+    })
+  })
+
+  it('a PARTIALLY_APPROVED request does the same', async () => {
+    await withAccountsLists(async () => {
+      await notifyMaterialRequestReviewed(ids.partialReqId!, 'PARTIALLY_APPROVED', null, ids.adminId!)
+      expect(sendMail).toHaveBeenCalledTimes(1)
+      const mail = lastMail()
+      expect(mail?.to).toContain(`accounts_${sfx}@e.local`)
+      expect(mail?.cc).toContain(ids.authorEmail)
+      expect(mail?.cc).toContain(`mgmt_${sfx}@e.local`)
+      expect(mail?.attachments).toHaveLength(1)
+    })
+  })
+
+  it('a REJECTED request notifies only the requester — no accounts, no attachment', async () => {
+    await withAccountsLists(async () => {
+      await notifyMaterialRequestReviewed(ids.rejectedReqId!, 'REJECTED', 'Not this cycle.', ids.adminId!)
+      expect(sendMail).toHaveBeenCalledTimes(1)
+      const mail = lastMail()
+      expect(mail?.to).toBe(ids.authorEmail)
+      expect(mail?.cc).toBeUndefined()
+      expect(mail?.to).not.toContain(`accounts_${sfx}@e.local`)
+      expect(mail?.attachments).toBeUndefined()
+    })
+  })
+
+  it('an empty ACCOUNTS list falls back to the requester and records why', async () => {
+    // No accounts recipients exist here (withAccountsLists always cleans up). The approval must still
+    // reach the requester, and the skip must be audited — never silently un-ordered.
+    vi.mocked(recordAuditLog).mockClear()
+    await notifyMaterialRequestReviewed(ids.approvedReqId!, 'APPROVED', 'x', ids.adminId!)
+    expect(sendMail).toHaveBeenCalledTimes(1)
+    const mail = lastMail()
+    expect(mail?.to).toBe(ids.authorEmail) // fell back to the requester
+    expect(mail?.cc).toBeUndefined()
+    expect(mail?.attachments).toHaveLength(1) // letter still attached
+    const audit = vi.mocked(recordAuditLog).mock.calls.map((c) => c[0]).find((a) => a.action === 'NOTIFICATION_SENT' && a.entity === 'MaterialRequest')
+    expect(audit?.metadata).toMatchObject({ recipientCount: 0, skipped: 'empty accounts list', fallback: 'requester' })
+  })
+})
+
+describe('5. sendRecordedEmail — To/Cc roles', () => {
+  it('no role → every address on To, nothing on Cc, and rows default to TO (unchanged)', async () => {
+    await sendRecordedEmail({
+      subject: 'x', bodyText: 'y', recipients: [{ address: `plain_${sfx}@e.local` }], attachment: null,
+      entityType: 'MATERIAL_REQUEST', entityId: `no-role-${sfx}`, entityCode: 'NR', projectId: ids.projectId, sentById: ids.adminId!,
+    })
+    const mail = lastMail()
+    expect(mail?.to).toBe(`plain_${sfx}@e.local`)
+    expect(mail?.cc).toBeUndefined()
+    const rows = await prisma.emailRecipient.findMany({ where: { emailSend: { entityId: `no-role-${sfx}` } }, select: { role: true } })
+    expect(rows.length).toBe(1)
+    expect(rows.every((r) => r.role === 'TO')).toBe(true)
+  })
+
+  it('records who was on Cc versus To in the EmailSend register', async () => {
+    await sendRecordedEmail({
+      subject: 'x', bodyText: 'y',
+      recipients: [{ address: `to_${sfx}@e.local`, role: 'TO' }, { address: `cc_${sfx}@e.local`, role: 'CC' }],
+      attachment: null, entityType: 'MATERIAL_REQUEST', entityId: `roles-${sfx}`, entityCode: 'RR', projectId: ids.projectId, sentById: ids.adminId!,
+    })
+    const mail = lastMail()
+    expect(mail?.to).toBe(`to_${sfx}@e.local`)
+    expect(mail?.cc).toBe(`cc_${sfx}@e.local`)
+    const rows = await prisma.emailRecipient.findMany({ where: { emailSend: { entityId: `roles-${sfx}` } }, select: { address: true, role: true } })
+    expect(rows.find((r) => r.address === `to_${sfx}@e.local`)?.role).toBe('TO')
+    expect(rows.find((r) => r.address === `cc_${sfx}@e.local`)?.role).toBe('CC')
   })
 })

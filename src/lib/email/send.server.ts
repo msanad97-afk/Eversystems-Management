@@ -1,3 +1,4 @@
+import type { EmailRecipientRole } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { sendMail, type MailAttachment } from '@/lib/email/transport'
 
@@ -27,6 +28,8 @@ export interface RecordedRecipient {
   address: string
   /** Set when the recipient was picked from the app's user list; null for a free-typed address. */
   userId?: string | null
+  /** To vs Cc. Omitted = TO, so every existing caller behaves exactly as before. */
+  role?: EmailRecipientRole
 }
 
 export interface RecordedEmailInput {
@@ -67,9 +70,13 @@ export function bodyToHtml(bodyText: string, attachmentName?: string | null): st
 }
 
 export async function sendRecordedEmail(input: RecordedEmailInput): Promise<RecordedEmailResult> {
+  // Split by role. An omitted role means TO, so a caller that passes no roles sends exactly as before:
+  // every address on To, nothing on Cc.
+  const toAddresses = input.recipients.filter((r) => (r.role ?? 'TO') === 'TO').map((r) => r.address)
+  const ccAddresses = input.recipients.filter((r) => r.role === 'CC').map((r) => r.address)
   const addresses = input.recipients.map((r) => r.address)
 
-  // PENDING row + its frozen recipients, atomically, before anything is sent.
+  // PENDING row + its frozen recipients (each with its To/Cc role), atomically, before anything is sent.
   let emailSendId: string
   try {
     const row = await prisma.$transaction(async (tx) => {
@@ -85,7 +92,7 @@ export async function sendRecordedEmail(input: RecordedEmailInput): Promise<Reco
           status: 'PENDING',
           sentById: input.sentById,
           recipients: {
-            create: input.recipients.map((r) => ({ address: r.address, userId: r.userId ?? null })),
+            create: input.recipients.map((r) => ({ address: r.address, userId: r.userId ?? null, role: r.role ?? 'TO' })),
           },
         },
         select: { id: true },
@@ -100,7 +107,8 @@ export async function sendRecordedEmail(input: RecordedEmailInput): Promise<Reco
 
   try {
     await sendMail({
-      to: addresses.join(', '),
+      to: toAddresses.join(', '),
+      cc: ccAddresses.length > 0 ? ccAddresses.join(', ') : undefined,
       subject: input.subject,
       html: bodyToHtml(input.bodyText, input.attachment?.filename),
       text: input.bodyText,

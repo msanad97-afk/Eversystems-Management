@@ -1028,6 +1028,13 @@ enum EmailSendStatus {
   FAILED
 }
 
+// Whether a recorded recipient was on the To or Cc line. Defaults to TO so every existing row keeps
+// its meaning with no backfill; only the widened material-request notification sets CC.
+enum EmailRecipientRole {
+  TO
+  CC
+}
+
 model EmailSend {
   id             String          @id @default(cuid())
   subject        String
@@ -1052,10 +1059,11 @@ model EmailSend {
 }
 
 model EmailRecipient {
-  id          String  @id @default(cuid())
+  id          String             @id @default(cuid())
   emailSendId String
   address     String // frozen at send time
   userId      String? // set when the recipient was an app user
+  role        EmailRecipientRole @default(TO) // To vs Cc — existing rows default to TO
 
   emailSend EmailSend @relation(fields: [emailSendId], references: [id], onDelete: Cascade)
   user      User?     @relation("EmailRecipientUser", fields: [userId], references: [id])
@@ -1070,7 +1078,9 @@ model EmailRecipient {
 enum NotificationType {
   VALUATION_CERTIFIED
   REPORT_MISSING
-  WEEKLY_SUMMARY // unused until Phase C; defined now
+  WEEKLY_SUMMARY
+  ACCOUNTS // receives purchase authorisations when a material request is approved
+  MATERIAL_REQUEST_MANAGEMENT // management, copied on those authorisations
 }
 
 model NotificationRecipient {

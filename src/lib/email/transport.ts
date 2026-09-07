@@ -17,6 +17,7 @@ export interface MailAttachment {
 
 export interface SendMailInput {
   to: string
+  cc?: string // nodemailer takes cc natively (comma-separated addresses), same as `to`
   subject: string
   html: string
   text?: string
@@ -49,7 +50,7 @@ function isUnderTest(): boolean {
   return process.env.VITEST != null || process.env.NODE_ENV === 'test'
 }
 
-export async function sendMail({ to, subject, html, text, attachments }: SendMailInput): Promise<void> {
+export async function sendMail({ to, cc, subject, html, text, attachments }: SendMailInput): Promise<void> {
   const from = process.env.SMTP_FROM ?? 'Eversystems Management <no-reply@eversystems.local>'
   // Refuse to send under test even when SMTP_HOST/USER/PASSWORD are configured; fall through to the
   // same log path as the no-credentials case so a test can still see what would have gone out.
@@ -61,10 +62,10 @@ export async function sendMail({ to, subject, html, text, attachments }: SendMai
       ? `\n  attachments: ${attachments.map((a) => `${a.filename} (${a.content.length} bytes)`).join(', ')}`
       : ''
     console.info(
-      `\n[email:dev] ${reason} — message not sent.\n  to: ${to}\n  subject: ${subject}${files}\n  ${text ?? html}\n`,
+      `\n[email:dev] ${reason} — message not sent.\n  to: ${to}${cc ? `\n  cc: ${cc}` : ''}\n  subject: ${subject}${files}\n  ${text ?? html}\n`,
     )
     return
   }
 
-  await transport.sendMail({ from, to, subject, html, text, attachments })
+  await transport.sendMail({ from, to, cc, subject, html, text, attachments })
 }

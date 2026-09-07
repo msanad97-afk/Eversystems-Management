@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { writeAuditLog } from '@/lib/audit'
+import { writeAuditLog, recordAuditLog } from '@/lib/audit'
 import { sendRecordedEmail, type RecordedRecipient } from '@/lib/email/send.server'
 import { resolveSendableDocument } from '@/lib/email/documents.server'
 import type { MailAttachment } from '@/lib/email/transport'
@@ -47,7 +47,11 @@ export async function notifyReportRejected(reportId: string, note: string, sentB
   }
 }
 
-// ─── 2. MATERIAL REQUEST REVIEWED → the requester (derived) ───────────────────
+// ─── 2. MATERIAL REQUEST REVIEWED → accounts (approved) or the requester (rejected/fallback) ──
+// Phase C-2 WIDENS the single B-2 notification rather than adding a second one: an APPROVED or
+// PARTIALLY_APPROVED request becomes an order to the ACCOUNTS list, cc the requesting supervisor and
+// the MATERIAL_REQUEST_MANAGEMENT list. A fully REJECTED request is unchanged — requester only. So
+// the supervisor still receives exactly ONE email in every case.
 export async function notifyMaterialRequestReviewed(requestId: string, status: MaterialRequestStatus, note: string | null, sentById: string): Promise<void> {
   try {
     const request = await prisma.materialRequest.findUnique({
@@ -60,23 +64,73 @@ export async function notifyMaterialRequestReviewed(requestId: string, status: M
     })
     if (!request || request.requestedBy.status !== 'ACTIVE') return
 
-    // Attach the procurement letter only when quantities were approved. The Phase A resolver already
-    // returns a non-ok result (no letter) for a fully-rejected request — that must NOT stop the note.
-    let attachment: MailAttachment | null = null
-    const resolved = await resolveSendableDocument('MATERIAL_REQUEST', request.id)
-    if (resolved.ok) attachment = resolved.doc.attachment
-
     const decision = status === 'APPROVED' ? 'approved' : status === 'PARTIALLY_APPROVED' ? 'partially approved' : 'rejected'
-    const bodyText = [
-      `Your material request ${request.requestCode} for ${request.project.name} has been ${decision}.`,
-      note ? `Reviewer note:\n${note}` : null,
-      attachment ? `The approved procurement letter is attached.` : `No quantities were approved, so there is no procurement letter.`,
-    ].filter(Boolean).join('\n\n')
+    const supervisor = request.requestedBy
+
+    // The procurement letter exists only when quantities were approved. The Phase A resolver returns
+    // a non-ok result (no letter) for a fully-rejected request — that must NOT stop the notification.
+    let attachment: MailAttachment | null = null
+    if (status !== 'REJECTED') {
+      const resolved = await resolveSendableDocument('MATERIAL_REQUEST', request.id)
+      if (resolved.ok) attachment = resolved.doc.attachment
+    }
+
+    // The Phase B-2 requester notification — used for a rejection, and as the fallback when there is
+    // no ACCOUNTS list to route the order to.
+    const notifyRequester = () =>
+      sendRecordedEmail({
+        subject: `Material request ${request.requestCode} ${decision} — ${request.project.name}`,
+        bodyText: [
+          `Your material request ${request.requestCode} for ${request.project.name} has been ${decision}.`,
+          note ? `Reviewer note:\n${note}` : null,
+          attachment ? `The approved procurement letter is attached.` : `No quantities were approved, so there is no procurement letter.`,
+        ].filter(Boolean).join('\n\n'),
+        recipients: [{ address: supervisor.email, userId: supervisor.id }],
+        attachment,
+        entityType: 'MATERIAL_REQUEST', entityId: request.id, entityCode: request.requestCode,
+        projectId: request.projectId, sentById,
+      })
+
+    // A fully-rejected request has nothing to order — unchanged from B-2, requester only.
+    if (status === 'REJECTED') {
+      await notifyRequester()
+      return
+    }
+
+    // APPROVED / PARTIALLY_APPROVED → an order for ACCOUNTS to place, copying supervisor + management.
+    const accounts = await getListRecipients('ACCOUNTS')
+    if (accounts.length === 0) {
+      // No accounts list configured: fall back to notifying the requester (as today) and record WHY,
+      // so an approval is never silently left un-ordered.
+      await recordAuditLog({
+        action: 'NOTIFICATION_SENT', userId: sentById, projectId: request.projectId,
+        entity: 'MaterialRequest', entityId: request.id, entityCode: request.requestCode,
+        metadata: { type: 'ACCOUNTS', recipientCount: 0, skipped: 'empty accounts list', fallback: 'requester' },
+      })
+      await notifyRequester()
+      return
+    }
+
+    // TO: accounts. CC: the requesting supervisor + management — de-duped by address, and never an
+    // address already on TO (a person is copied at most once; TO wins over CC).
+    const toByAddr = new Map<string, RecordedRecipient>()
+    for (const a of accounts) toByAddr.set(a.address.toLowerCase(), { address: a.address, userId: a.userId, role: 'TO' })
+    const ccByAddr = new Map<string, RecordedRecipient>()
+    ccByAddr.set(supervisor.email.toLowerCase(), { address: supervisor.email, userId: supervisor.id, role: 'CC' })
+    const management = await getListRecipients('MATERIAL_REQUEST_MANAGEMENT')
+    for (const m of management) if (!ccByAddr.has(m.address.toLowerCase())) ccByAddr.set(m.address.toLowerCase(), { address: m.address, userId: m.userId, role: 'CC' })
+    for (const addr of toByAddr.keys()) ccByAddr.delete(addr)
+    const recipients: RecordedRecipient[] = [...toByAddr.values(), ...ccByAddr.values()]
 
     await sendRecordedEmail({
-      subject: `Material request ${request.requestCode} ${decision} — ${request.project.name}`,
-      bodyText,
-      recipients: [{ address: request.requestedBy.email, userId: request.requestedBy.id }],
+      subject: `Purchase authorisation — ${request.requestCode} (${request.project.name}) — order approved materials`,
+      bodyText: [
+        `Material request ${request.requestCode} for ${request.project.name} has been ${decision} and is cleared for ordering.`,
+        `Please place the order for the approved quantities in the attached procurement letter.`,
+        note ? `Reviewer note:\n${note}` : null,
+        `The requesting site supervisor and management are copied.`,
+      ].filter(Boolean).join('\n\n'),
+      recipients,
       attachment,
       entityType: 'MATERIAL_REQUEST', entityId: request.id, entityCode: request.requestCode,
       projectId: request.projectId, sentById,
