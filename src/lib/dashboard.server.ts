@@ -159,10 +159,10 @@ export async function loadDashboard(input: {
       })
     : []
   const earnedBySub = new Map(earnedRows.map((r) => [r.subActivityId, Number(r._sum.quantityDone ?? 0)]))
-  // Lumpsum subs contribute their latest APPROVED cumulative % — the same figure EV and the report
-  // view use (reused, not recomputed). No date cutoff on this source (see note in the task report).
+  // Lumpsum subs contribute their latest APPROVED cumulative % AS OF the range end (`to`), matching
+  // the measured earned filter above — so the range shows progress as it stood then, not latest-overall.
   const lumpsumIds = assetsForProgress.flatMap((a) => a.activities.flatMap((x) => x.subActivities.filter((s) => s.type === 'LUMPSUM').map((s) => s.id)))
-  const lumpsumPctBySub = await lumpsumFloorBySubActivity(lumpsumIds)
+  const lumpsumPctBySub = await lumpsumFloorBySubActivity(lumpsumIds, civilMidnightUtc(to))
   const projMeta = new Map(activeProjects.map((p) => [p.id, p]))
   const progressRows: ProgressRow[] = assetsForProgress.flatMap((asset) =>
     asset.activities

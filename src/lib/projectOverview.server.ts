@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { loadProjectEvm } from '@/lib/evm.server'
 import { loadBudgetVsActual, type SubActivityProgress } from '@/lib/actuals.server'
+import { lumpsumFloorBySubActivity } from '@/lib/reports/progress'
 import { cumulativePercent } from '@/lib/reports/rules'
 
 /**
@@ -22,10 +23,11 @@ import { cumulativePercent } from '@/lib/reports/rules'
  * name (implicit lines never surface); a sub absent from an asset's placement is a null cell that the
  * UI renders as a dash — distinct from a real 0%.
  *
- * RECENT PROGRESS: a cell rising in the last 7 days is flagged with its delta. There is no existing
- * as-of helper, so the 7-days-ago baseline is computed here: each sub's cumulative % from APPROVED
- * reports dated BEFORE cutoff = UTC-midnight(today) − 7 days (measured: cumulativePercent(Σ earned);
- * lumpsum: latest approved %). delta = current − baseline; flagged only when it increased.
+ * RECENT PROGRESS: a cell rising in the last 7 days is flagged with its delta. The 7-days-ago
+ * baseline is each sub's cumulative % from APPROVED reports dated on or before asOf =
+ * UTC-midnight(today) − 7 days — measured: cumulativePercent(Σ earned) over an as-of query; lumpsum:
+ * lumpsumFloorBySubActivity(asOf), the shared as-of lookup (so it never reads latest-overall).
+ * delta = current − baseline; flagged only when it increased.
  *
  * Inactive assets and activities are excluded.
  */
@@ -79,33 +81,32 @@ const round1 = (n: number) => Math.round(n * 10) / 10
 const DELTA_TOL = 0.05
 
 export async function loadProjectOverview(projectId: string): Promise<ProjectOverview | null> {
-  // 7-days-ago cutoff (UTC date boundary). Reports dated on/after this moved a cell "recently".
+  // Baseline boundary: reports dated on or before asOf = UTC-midnight(today) − 7 days count as the
+  // "7 days ago" state; anything dated after it is a rise within the window.
   const now = new Date()
-  const cutoff = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 7))
+  const asOf = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 7))
 
-  const [project, evm, bva, assetRefs, baselineRows] = await Promise.all([
+  const [project, evm, bva, assetRefs, measuredBaselineRows] = await Promise.all([
     prisma.project.findUnique({ where: { id: projectId }, select: { name: true, projectCode: true } }),
     loadProjectEvm(projectId),
     loadBudgetVsActual(projectId),
     prisma.asset.findMany({ where: { projectId, isActive: true }, select: { id: true, ref: true } }),
-    // Per-sub progress AS OF the cutoff — the only genuinely new computation (no as-of helper exists).
-    prisma.reportSubActivity.findMany({
-      where: { reportActivity: { report: { projectId, status: 'APPROVED', reportDate: { lt: cutoff } } } },
-      orderBy: [{ reportActivity: { report: { reportDate: 'desc' } } }, { id: 'desc' }],
-      select: { subActivityId: true, quantityDone: true, percentComplete: true },
+    // Measured Σ earned as of the baseline date. Lumpsum baseline comes from the shared as-of lookup.
+    prisma.reportSubActivity.groupBy({
+      by: ['subActivityId'],
+      where: { quantityDone: { not: null }, reportActivity: { report: { projectId, status: 'APPROVED', reportDate: { lte: asOf } } } },
+      _sum: { quantityDone: true },
     }),
   ])
   if (!project || !evm) return null
 
   const refByAsset = new Map(assetRefs.map((a) => [a.id, a.ref]))
 
-  // Baseline accumulators: measured Σ earned before cutoff; lumpsum latest % before cutoff (rows desc).
-  const baseEarnedBySub = new Map<string, number>()
-  const baseLatestPctBySub = new Map<string, number>()
-  for (const r of baselineRows) {
-    if (r.quantityDone != null) baseEarnedBySub.set(r.subActivityId, (baseEarnedBySub.get(r.subActivityId) ?? 0) + Number(r.quantityDone))
-    if (r.percentComplete != null && !baseLatestPctBySub.has(r.subActivityId)) baseLatestPctBySub.set(r.subActivityId, Number(r.percentComplete))
-  }
+  // Baseline accumulators: measured Σ earned ≤ asOf; lumpsum latest approved % ≤ asOf (shared lookup,
+  // so the matrix and the dashboard read lumpsum as-of the same way — never latest-overall).
+  const baseEarnedBySub = new Map(measuredBaselineRows.map((r) => [r.subActivityId, Number(r._sum.quantityDone ?? 0)]))
+  const lumpsumSubIds = (bva?.assets ?? []).flatMap((a) => a.activities.flatMap((act) => act.subProgress.filter((s) => s.type === 'LUMPSUM').map((s) => s.subActivityId)))
+  const baseLatestPctBySub = await lumpsumFloorBySubActivity(lumpsumSubIds, asOf)
   const baselinePct = (sp: SubActivityProgress, boq: number): number =>
     sp.type === 'MEASURED' ? cumulativePercent(baseEarnedBySub.get(sp.subActivityId) ?? 0, boq) : (baseLatestPctBySub.get(sp.subActivityId) ?? 0)
 

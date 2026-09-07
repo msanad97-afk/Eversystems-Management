@@ -64,11 +64,16 @@ async function approvedMaterialConsumption(subActivityIds: string[]): Promise<Ma
   return out
 }
 
-/** Latest cumulative % per lumpsum sub-activity (most recent report by date) over statuses. */
+/**
+ * Latest cumulative % per lumpsum sub-activity (most recent report by date) over statuses.
+ * `asOf` (optional) caps it to reports dated ON OR BEFORE that date, so an as-of computation reads
+ * the value as it stood then; omitting it keeps latest-overall (today's) behaviour.
+ */
 async function latestPercentBySubActivity(
   subActivityIds: string[],
   statuses: ReportStatus[],
   excludeReportId?: string,
+  asOf?: Date,
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>()
   if (subActivityIds.length === 0) return out
@@ -77,7 +82,10 @@ async function latestPercentBySubActivity(
       subActivityId: { in: subActivityIds },
       percentComplete: { not: null },
       reportActivity: {
-        report: { status: { in: statuses } },
+        report: {
+          status: { in: statuses },
+          ...(asOf ? { reportDate: { lte: asOf } } : {}),
+        },
         ...(excludeReportId ? { reportId: { not: excludeReportId } } : {}),
       },
     },
@@ -221,9 +229,12 @@ export async function remainingBySubActivity(
   return map
 }
 
-/** Latest APPROVED cumulative % per lumpsum sub-activity — the no-regression floor. */
-export async function lumpsumFloorBySubActivity(subActivityIds: string[]): Promise<Map<string, number>> {
-  return latestPercentBySubActivity(subActivityIds, EARNED)
+/**
+ * Latest APPROVED cumulative % per lumpsum sub-activity — the no-regression floor. Pass `asOf` to
+ * read the value as of a date (reports dated on or before it); omit it for latest-overall (today).
+ */
+export async function lumpsumFloorBySubActivity(subActivityIds: string[], asOf?: Date): Promise<Map<string, number>> {
+  return latestPercentBySubActivity(subActivityIds, EARNED, undefined, asOf)
 }
 
 /** Earned (APPROVED-only) measured quantity per sub-activity — for read-view cumulative %. */

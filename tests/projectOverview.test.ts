@@ -157,9 +157,13 @@ describe('loadProjectOverview — progress matrix', () => {
     expect(Object.keys(m).sort()).toEqual(['columns', 'key', 'name', 'ref', 'rows'])
     expect(Object.keys(m.columns[0]!).sort()).toEqual(['key', 'name', 'type', 'weightPct'])
     expect(Object.keys(m.rows[0]!).sort()).toEqual(['assetId', 'assetName', 'assetRef', 'boqQuantity', 'cells', 'totalDelta', 'totalPercent', 'unit'])
+    const cell = m.rows[0]!.cells.find((c) => c != null)!
+    expect(Object.keys(cell).sort()).toEqual(['delta', 'percent'])
+    // The Object.keys checks above are the real guarantee. This string scan is a backstop against
+    // cost FIELD names leaking; every token carries an uppercase letter so none can match a random
+    // lowercase cuid (a bare numeric or lowercase token could — that's what made an earlier check flaky).
     const s = JSON.stringify(o.matrix)
-    // Cost-specific markers (bare 'ac'/'ev'/'cv' would collide with words like "activities").
-    for (const token of ['bac', 'cpi', 'eac', 'vac', 'contractValue', 'BHD', 'cost', 'lumpsumBhd', 'unitRate', 'hourlyRate', '1000']) {
+    for (const token of ['BHD', 'lumpsumBhd', 'costRate', 'costRateAtPlacement', 'contractValue', 'billRate', 'lumpsumEarnedBhd', 'lumpsumBudgetBhd']) {
       expect(s).not.toContain(token)
     }
   })
