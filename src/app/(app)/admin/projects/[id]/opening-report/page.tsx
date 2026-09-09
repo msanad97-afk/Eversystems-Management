@@ -4,10 +4,11 @@ import { requireAdminPage } from '@/lib/auth/permissions'
 import { prisma } from '@/lib/prisma'
 import { loadFormScope } from '@/lib/reports/progress'
 import { openingReportDateError, defaultOpeningDate } from '@/lib/reports/opening'
-import { earliestReportDate } from '@/lib/reports/opening.server'
+import { earliestReportDate, openingReopenGate } from '@/lib/reports/opening.server'
 import { addDays } from '@/lib/datetime'
 import { OpeningReportEditor, type OpeningScopeActivity } from '@/components/reports/OpeningReportEditor'
 import { CreateOpeningReport } from '@/components/reports/CreateOpeningReport'
+import { ReopenOpeningReport } from '@/components/reports/ReopenOpeningReport'
 
 export const dynamic = 'force-dynamic'
 
@@ -101,12 +102,21 @@ export default async function OpeningReportPage({ params }: { params: { id: stri
     }))),
   }
 
+  // When the opening report is APPROVED, offer a gated re-open (or explain why it is blocked).
+  const reopen = existing.status === 'APPROVED'
+    ? await openingReopenGate({ id: existing.id, isOpeningBalance: true, status: existing.status, projectId: project.id, reportDate: existing.reportDate })
+    : null
+
   return (
     <div className="space-y-5">
       {header}
       <div className="rounded-lg border border-border bg-surface-subtle px-4 py-3 text-sm text-fg">
         Labour here is a <span className="font-semibold">direct cost with no man-hours</span>. Cumulative man-hours for this project will be understated by the pre-go-live period — that is expected, and flagged wherever man-hours appear.
       </div>
+      {reopen && (reopen.ok
+        ? <ReopenOpeningReport reportId={existing.id} />
+        : <div className="rounded-lg border border-border bg-surface px-4 py-3 text-sm text-fg-muted"><span className="font-medium text-fg">Re-open unavailable.</span> {reopen.reason}</div>
+      )}
       <OpeningReportEditor activities={activities} initial={initial} minDate={startStr} maxDate={maxStr} />
     </div>
   )

@@ -87,7 +87,7 @@ describe('opening date — supplied validation, collision, draft edit, immutabil
     const ok = await createOpening(post({ reportDate: '2026-06-10' }), { params: { id: projectId } })
     expect(ok.status).toBe(201)
     ids.boundsReportId = (await ok.json()).report.id
-    expect(await openingDate(ids.boundsReportId)).toBe('2026-06-10')
+    expect(await openingDate(ids.boundsReportId!)).toBe('2026-06-10')
   })
 
   it('changes the date on a draft, then rejects an out-of-bounds change', async () => {
